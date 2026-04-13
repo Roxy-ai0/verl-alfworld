@@ -122,6 +122,8 @@ def make_config(args: argparse.Namespace):
                 "actor_rollout_ref.actor.fsdp_config.param_offload=True",
                 "actor_rollout_ref.actor.fsdp_config.optimizer_offload=True",
                 "reward.reward_manager.name=naive",
+                "+actor_rollout_ref.model.override_config.attn_implementation=eager",
+                "+actor_rollout_ref.ref.model.override_config.attn_implementation=eager",
             ],
         )
 
@@ -139,6 +141,7 @@ def make_config(args: argparse.Namespace):
     config.actor_rollout_ref.rollout.agent.agent_loop_config_path = str(
         Path(args.agent_loop_config).expanduser().resolve()
     )
+
     config.actor_rollout_ref.rollout.temperature = args.temperature
     config.actor_rollout_ref.rollout.top_p = args.top_p
     config.actor_rollout_ref.rollout.top_k = args.top_k
@@ -146,10 +149,15 @@ def make_config(args: argparse.Namespace):
     config.actor_rollout_ref.rollout.val_kwargs.top_p = args.top_p
     config.actor_rollout_ref.rollout.val_kwargs.top_k = args.top_k
 
+    config.actor_rollout_ref.model.override_config.attn_implementation = "eager"
+    config.actor_rollout_ref.ref.model.override_config.attn_implementation = "eager"
+
     config.reward.reward_model.enable = False
     config.trainer.n_gpus_per_node = args.gpus_per_node
     config.trainer.nnodes = 1
+
     return config
+
 
 
 def load_records(args: argparse.Namespace) -> list[dict[str, Any]]:
