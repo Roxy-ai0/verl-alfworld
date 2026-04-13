@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 import ray
+import torch
 from hydra import compose, initialize_config_dir
 
 from verl.checkpoint_engine import CheckpointEngineManager
@@ -136,12 +137,14 @@ def make_config(args: argparse.Namespace):
     config.actor_rollout_ref.rollout.n = 1
     config.actor_rollout_ref.rollout.skip_tokenizer_init = True
     config.actor_rollout_ref.rollout.calculate_log_probs = True
+    config.actor_rollout_ref.rollout.tensor_model_parallel_size = 1
+    config.actor_rollout_ref.rollout.data_parallel_size = 1
+    config.actor_rollout_ref.rollout.pipeline_model_parallel_size = 1
     config.actor_rollout_ref.rollout.agent.num_workers = args.num_workers
     config.actor_rollout_ref.rollout.agent.default_agent_loop = "alfworld_direct_agent"
     config.actor_rollout_ref.rollout.agent.agent_loop_config_path = str(
         Path(args.agent_loop_config).expanduser().resolve()
     )
-
     config.actor_rollout_ref.rollout.temperature = args.temperature
     config.actor_rollout_ref.rollout.top_p = args.top_p
     config.actor_rollout_ref.rollout.top_k = args.top_k
@@ -151,13 +154,15 @@ def make_config(args: argparse.Namespace):
 
     config.actor_rollout_ref.model.override_config.attn_implementation = "eager"
     config.actor_rollout_ref.ref.model.override_config.attn_implementation = "eager"
+    config.actor_rollout_ref.rollout.dtype = "float16"
+    config.actor_rollout_ref.actor.fsdp_config.dtype = "float16"
+    config.actor_rollout_ref.ref.fsdp_config.dtype = "float16"
 
     config.reward.reward_model.enable = False
     config.trainer.n_gpus_per_node = args.gpus_per_node
     config.trainer.nnodes = 1
-
+    config.trainer.device = "cuda"
     return config
-
 
 
 def load_records(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -227,16 +232,26 @@ def main() -> None:
     if not records:
         raise RuntimeError("No evaluation records loaded.")
 
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    print(f"CUDA_VISIBLE_DEVICES = {visible_devices}")
+    print(f"torch.cuda.is_available() = {torch.cuda.is_available()}")
+    print(f"torch.cuda.device_count() = {torch.cuda.device_count()}")
+
     ray.init(
+        num_gpus=args.gpus_per_node,
         runtime_env={
             "env_vars": {
                 "TOKENIZERS_PARALLELISM": "true",
                 "VLLM_USE_V1": "1",
                 "VLLM_LOGGING_LEVEL": "INFO",
+                "CUDA_VISIBLE_DEVICES": visible_devices,
+                "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
+                "NCCL_DEBUG": "WARN",
             }
         },
         ignore_reinit_error=True,
     )
+    print(f"Ray available resources: {ray.available_resources()}")
 
     agent_loop_manager = init_agent_loop_manager(config)
 
