@@ -244,8 +244,6 @@ def main() -> None:
                 "TOKENIZERS_PARALLELISM": "true",
                 "VLLM_USE_V1": "1",
                 "VLLM_LOGGING_LEVEL": "INFO",
-                "CUDA_VISIBLE_DEVICES": visible_devices,
-                "RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES": "1",
                 "NCCL_DEBUG": "WARN",
             }
         },
