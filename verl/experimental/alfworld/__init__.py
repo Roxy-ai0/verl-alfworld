@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from .direct_agent_loop import ALFWorldDirectAgentLoop
+from .react_agent_loop import ALFWorldReActAgentLoop
 
-__all__ = ["ALFWorldDirectAgentLoop"]
+__all__ = ["ALFWorldDirectAgentLoop", "ALFWorldReActAgentLoop"]

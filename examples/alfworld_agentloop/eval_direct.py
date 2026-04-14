@@ -22,6 +22,7 @@ import numpy as np
 import ray
 import torch
 from hydra import compose, initialize_config_dir
+from tqdm.auto import tqdm
 
 from verl.checkpoint_engine import CheckpointEngineManager
 from verl.experimental.agent_loop import AgentLoopManager
@@ -255,6 +256,7 @@ def main() -> None:
 
     episode_results = []
     trace_writer = traces_path.open("w", encoding="utf-8") if args.save_traces else None
+    progress_bar = tqdm(total=len(records), desc=f"ALFWorld direct eval [{args.split}]", unit="episode")
 
     try:
         for chunk in chunk_list(records, args.batch_size):
@@ -289,7 +291,18 @@ def main() -> None:
                 if trace_writer is not None:
                     trace_writer.write(json.dumps(to_serializable(episode_summary), ensure_ascii=False) + "\n")
                     trace_writer.flush()
+
+            progress_bar.update(len(chunk))
+            if episode_results:
+                current_success_rate = sum(item["success"] for item in episode_results) / len(episode_results)
+                current_avg_steps = sum(item["num_env_steps"] for item in episode_results) / len(episode_results)
+                progress_bar.set_postfix(
+                    success_rate=f"{current_success_rate:.3f}",
+                    avg_steps=f"{current_avg_steps:.2f}",
+                    refresh=False,
+                )
     finally:
+        progress_bar.close()
         if trace_writer is not None:
             trace_writer.close()
         ray.shutdown()

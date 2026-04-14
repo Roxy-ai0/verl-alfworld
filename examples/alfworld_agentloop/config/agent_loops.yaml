@@ -1,3 +1,8 @@
 - name: alfworld_direct_agent
   _target_: verl.experimental.alfworld.direct_agent_loop.ALFWorldDirectAgentLoop
   max_steps: 30
+
+- name: alfworld_react_agent
+  _target_: verl.experimental.alfworld.react_agent_loop.ALFWorldReActAgentLoop
+  max_steps: 30
+  history_window: 5
