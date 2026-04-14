@@ -27,6 +27,7 @@ from tqdm.auto import tqdm
 from verl.checkpoint_engine import CheckpointEngineManager
 from verl.experimental.agent_loop import AgentLoopManager
 from verl.experimental.alfworld.dataset import build_episode_record, discover_episodes
+from verl.experimental.alfworld.task_category import build_category_success_summary, infer_alfworld_task_category
 from verl.experimental.reward_loop import RewardLoopManager
 from verl.protocol import DataProto
 from verl.single_controller.ray import RayClassWithInitArgs, RayWorkerGroup
@@ -272,11 +273,18 @@ def main() -> None:
             trace_array = result.non_tensor_batch.get("episode_trace")
 
             for i, record in enumerate(chunk):
+                task_category = infer_alfworld_task_category(
+                    task_id=record["extra_info"].get("task_id", ""),
+                    gamefile=record["extra_info"].get("gamefile", ""),
+                    task_description=record["extra_info"].get("task_description", ""),
+                    task_type=record["extra_info"].get("task_type", ""),
+                )
                 episode_summary = {
                     "task_id": record["extra_info"]["task_id"],
                     "split": record["extra_info"]["split"],
                     "gamefile": record["extra_info"]["gamefile"],
                     "task_description": record["extra_info"]["task_description"],
+                    "task_category": task_category,
                     "success": bool(success_array[i]) if success_array is not None else bool(acc_array[i]),
                     "acc": float(acc_array[i]) if acc_array is not None else 0.0,
                     "num_env_steps": int(steps_array[i]) if steps_array is not None else 0,
@@ -313,6 +321,7 @@ def main() -> None:
         1, sum(item["num_env_steps"] for item in episode_results)
     )
     avg_final_reward = sum(item["final_reward"] for item in episode_results) / len(episode_results)
+    category_success = build_category_success_summary(episode_results)
 
     summary = {
         "split": args.split,
@@ -325,6 +334,7 @@ def main() -> None:
         "avg_steps": avg_steps,
         "invalid_action_rate": invalid_action_rate,
         "avg_final_reward": avg_final_reward,
+        "category_success": category_success,
         "traces_path": str(traces_path) if args.save_traces else None,
     }
 
