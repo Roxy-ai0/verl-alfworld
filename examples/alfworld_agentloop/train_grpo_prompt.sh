@@ -58,10 +58,11 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.use_dynamic_bsz=True \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+  actor_rollout_ref.actor.fsdp_config.dtype=float16 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu="${ROLLOUT_LOGPROB_MB_PER_GPU}" \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
-  actor_rollout_ref.rollout.dtype=bfloat16 \
+  actor_rollout_ref.rollout.dtype=float16 \
   actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.rollout.prompt_length=2048 \
@@ -83,6 +84,7 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.val_kwargs.do_sample=True \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu="${REF_LOGPROB_MB_PER_GPU}" \
   actor_rollout_ref.ref.fsdp_config.param_offload=True \
+  actor_rollout_ref.ref.fsdp_config.dtype=float16 \
   reward.reward_model.enable=False \
   reward.reward_manager.name=naive \
   trainer.project_name='verl_alfworld_prompt_grpo' \
