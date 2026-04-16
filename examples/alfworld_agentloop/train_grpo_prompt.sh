@@ -44,7 +44,6 @@ python -m verl.trainer.main_ppo \
   data.filter_overlong_prompts=True \
   data.truncation='error' \
   +actor_rollout_ref.model.override_config.attn_implementation=eager \
-  +actor_rollout_ref.ref.model.override_config.attn_implementation=eager \
   actor_rollout_ref.model.path="${MODEL_PATH}" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   actor_rollout_ref.actor.optim.lr=1e-6 \
