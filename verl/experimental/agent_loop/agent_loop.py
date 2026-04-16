@@ -23,6 +23,7 @@ import hydra
 import numpy as np
 import ray
 import torch
+import torch.nn.functional as F
 from cachetools import LRUCache
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
@@ -60,6 +61,28 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 DEFAULT_ROUTING_CACHE_SIZE = 10000
+
+
+def _pad_tensor_batch(
+    tensors: list[torch.Tensor],
+    pad_value: int | float = 0,
+    seq_dim: int = 1,
+) -> torch.Tensor:
+    """Right-pad tensors in a batch to the longest sequence length."""
+    if not tensors:
+        raise ValueError("tensors must be non-empty")
+
+    max_len = max(tensor.shape[seq_dim] for tensor in tensors)
+    padded_tensors = []
+    for tensor in tensors:
+        pad_len = max_len - tensor.shape[seq_dim]
+        if pad_len > 0:
+            pad_cfg = [0, 0] * tensor.dim()
+            rev_dim = tensor.dim() - 1 - seq_dim
+            pad_cfg[2 * rev_dim + 1] = pad_len
+            tensor = F.pad(tensor, tuple(pad_cfg), value=pad_value)
+        padded_tensors.append(tensor)
+    return torch.cat(padded_tensors, dim=0)
 
 
 @ray.remote
@@ -953,26 +976,45 @@ class AgentLoopWorker:
     ) -> DataProto:
         """Process the padded outputs from _run_agent_loop and combine them into a batch."""
         # Convert lists back to tensors and stack them to create a batch.
-        prompt_ids = torch.cat([input.prompt_ids for input in inputs], dim=0)
-        response_ids = torch.cat([input.response_ids for input in inputs], dim=0)
-        response_mask = torch.cat([input.response_mask for input in inputs], dim=0)
-        attention_mask = torch.cat([input.attention_mask for input in inputs], dim=0)
-        input_ids = torch.cat([input.input_ids for input in inputs], dim=0)
-        position_ids = torch.cat([input.position_ids for input in inputs], dim=0)
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        prompt_ids = _pad_tensor_batch([input.prompt_ids for input in inputs], pad_value=pad_token_id, seq_dim=1)
+        response_ids = _pad_tensor_batch([input.response_ids for input in inputs], pad_value=pad_token_id, seq_dim=1)
+        response_mask = _pad_tensor_batch([input.response_mask for input in inputs], pad_value=0, seq_dim=1)
+        attention_mask = _pad_tensor_batch([input.attention_mask for input in inputs], pad_value=0, seq_dim=1)
+        input_ids = _pad_tensor_batch([input.input_ids for input in inputs], pad_value=pad_token_id, seq_dim=1)
+        position_ids = _pad_tensor_batch(
+            [input.position_ids for input in inputs],
+            pad_value=0,
+            seq_dim=2 if inputs[0].position_ids.dim() == 3 else 1,
+        )
         optional_outputs = {}
         if inputs[0].response_logprobs is not None:
-            optional_outputs["rollout_log_probs"] = torch.cat([input.response_logprobs for input in inputs], dim=0)
+            optional_outputs["rollout_log_probs"] = _pad_tensor_batch(
+                [input.response_logprobs for input in inputs], pad_value=0.0, seq_dim=1
+            )
         if inputs[0].rm_scores is not None:
-            optional_outputs["rm_scores"] = torch.cat([input.rm_scores for input in inputs], dim=0)
+            optional_outputs["rm_scores"] = _pad_tensor_batch(
+                [input.rm_scores for input in inputs], pad_value=0.0, seq_dim=1
+            )
         if inputs[0].step_reward_mask is not None:
-            optional_outputs["step_reward_mask"] = torch.cat([input.step_reward_mask for input in inputs], dim=0)
+            optional_outputs["step_reward_mask"] = _pad_tensor_batch(
+                [input.step_reward_mask for input in inputs], pad_value=0, seq_dim=1
+            )
         if inputs[0].step_ids is not None:
-            optional_outputs["step_ids"] = torch.cat([input.step_ids for input in inputs], dim=0)
+            optional_outputs["step_ids"] = _pad_tensor_batch(
+                [input.step_ids for input in inputs], pad_value=0, seq_dim=1
+            )
         if inputs[0].routed_experts is not None:
-            optional_outputs["routed_experts"] = torch.cat([input.routed_experts for input in inputs], dim=0)
+            optional_outputs["routed_experts"] = _pad_tensor_batch(
+                [input.routed_experts for input in inputs], pad_value=0, seq_dim=1
+            )
         if inputs[0].teacher_logprobs is not None and inputs[0].teacher_ids is not None:
-            optional_outputs["teacher_logprobs"] = torch.cat([input.teacher_logprobs for input in inputs], dim=0)
-            optional_outputs["teacher_ids"] = torch.cat([input.teacher_ids for input in inputs], dim=0)
+            optional_outputs["teacher_logprobs"] = _pad_tensor_batch(
+                [input.teacher_logprobs for input in inputs], pad_value=0.0, seq_dim=1
+            )
+            optional_outputs["teacher_ids"] = _pad_tensor_batch(
+                [input.teacher_ids for input in inputs], pad_value=pad_token_id, seq_dim=1
+            )
         batch = TensorDict(
             {
                 "prompts": prompt_ids,  # [bsz, prompt_length]
