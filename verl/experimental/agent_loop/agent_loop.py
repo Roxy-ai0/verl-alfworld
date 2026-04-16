@@ -1292,7 +1292,9 @@ class AgentLoopManager:
         if not outputs or outputs[0].batch is None:
             return outputs
 
-        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        manager_tokenizer = getattr(self.model_config, "tokenizer", None)
+        pad_token_id = getattr(manager_tokenizer, "pad_token_id", None)
+        pad_token_id = 0 if pad_token_id is None else pad_token_id
         pad_values = {
             "prompts": pad_token_id,
             "responses": pad_token_id,
