@@ -167,6 +167,8 @@ class ActorConfig(BaseConfig):
     tau_neg: float = 1.05
     calculate_entropy: bool = False
     use_kl_loss: bool = False
+    use_invalid_action_penalty: bool = False
+    invalid_action_penalty_coef: float = 0.0
     # Whether to enable PrefixGrouper-based shared-prefix forward
     use_prefix_grouper: bool = False
     use_torch_compile: bool = True

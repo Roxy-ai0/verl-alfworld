@@ -269,6 +269,8 @@ def compute_grpo_outcome_advantage(
     token_level_rewards: torch.Tensor,
     response_mask: torch.Tensor,
     index: np.ndarray,
+    step_reward_mask: Optional[torch.Tensor] = None,
+    step_ids: Optional[torch.Tensor] = None,
     epsilon: float = 1e-6,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
@@ -301,6 +303,51 @@ def compute_grpo_outcome_advantage(
         Returns: `(torch.Tensor)`
             shape is (bs, response_length)
     """
+    if (
+        config is not None
+        and config.get("compute_mean_std_cross_steps", False)
+        and step_reward_mask is not None
+        and step_ids is not None
+    ):
+        with torch.no_grad():
+            step_reward_mask = step_reward_mask.to(device=token_level_rewards.device).bool()
+            step_ids = step_ids.to(device=token_level_rewards.device)
+            advantages = torch.zeros_like(token_level_rewards)
+
+            id2step_scores = defaultdict(list)
+            step_refs = []
+            for row_idx in range(token_level_rewards.size(0)):
+                reward_positions = torch.nonzero(step_reward_mask[row_idx], as_tuple=False).flatten().tolist()
+                for col_idx in reward_positions:
+                    step_id = int(step_ids[row_idx, col_idx].item())
+                    if step_id <= 0:
+                        continue
+                    step_score = token_level_rewards[row_idx, col_idx]
+                    id2step_scores[index[row_idx]].append(step_score)
+                    step_refs.append((row_idx, step_id, step_score))
+
+            id2mean = {}
+            id2std = {}
+            for idx, scores_for_group in id2step_scores.items():
+                if len(scores_for_group) == 1:
+                    id2mean[idx] = torch.tensor(0.0, device=token_level_rewards.device)
+                    id2std[idx] = torch.tensor(1.0, device=token_level_rewards.device)
+                else:
+                    scores_tensor = torch.stack(scores_for_group)
+                    id2mean[idx] = torch.mean(scores_tensor)
+                    id2std[idx] = torch.std(scores_tensor)
+
+            for row_idx, step_id, step_score in step_refs:
+                if norm_adv_by_std_in_grpo:
+                    normalized_score = (step_score - id2mean[index[row_idx]]) / (id2std[index[row_idx]] + epsilon)
+                else:
+                    normalized_score = step_score - id2mean[index[row_idx]]
+                step_token_mask = (step_ids[row_idx] == step_id) & response_mask[row_idx].bool()
+                advantages[row_idx, step_token_mask] = normalized_score
+
+            advantages = advantages * response_mask
+            return advantages, advantages
+
     scores = token_level_rewards.sum(dim=-1)
 
     id2score = defaultdict(list)
@@ -336,6 +383,8 @@ def compute_grpo_vectorized_outcome_advantage(
     token_level_rewards: torch.Tensor,
     response_mask: torch.Tensor,
     index: np.ndarray,
+    step_reward_mask: Optional[torch.Tensor] = None,
+    step_ids: Optional[torch.Tensor] = None,
     epsilon: float = 1e-6,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
@@ -347,6 +396,22 @@ def compute_grpo_vectorized_outcome_advantage(
       then broadcast the scalar across the token dimension (multiplied by response_mask).。
     """
     with torch.no_grad():
+        if (
+            config is not None
+            and config.get("compute_mean_std_cross_steps", False)
+            and step_reward_mask is not None
+            and step_ids is not None
+        ):
+            return compute_grpo_outcome_advantage(
+                token_level_rewards=token_level_rewards,
+                response_mask=response_mask,
+                index=index,
+                step_reward_mask=step_reward_mask,
+                step_ids=step_ids,
+                epsilon=epsilon,
+                norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+                config=config,
+            )
         scores = token_level_rewards.sum(dim=-1)
         g = as_torch_index(index, device=scores.device)
         mean_g, std_g, _ = group_mean_std(scores, g, eps=epsilon, device=scores.device)

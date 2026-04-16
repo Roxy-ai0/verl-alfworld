@@ -202,6 +202,12 @@ class AgentLoopOutput(BaseModel):
     """Multi-modal data for multi-modal tools."""
     reward_score: Optional[float] = None
     """Reward score for the trajectory."""
+    rm_scores: Optional[list[float]] = None
+    """Optional precomputed token-level reward scores aligned with response_ids."""
+    step_reward_mask: Optional[list[int]] = None
+    """Optional mask marking which response positions correspond to step-level rewards."""
+    step_ids: Optional[list[int]] = None
+    """Optional step ids for broadcasting step-level rewards across assistant tokens."""
     num_turns: int = 0
     """Number of chat turns, including user, assistant, tool."""
     metrics: AgentLoopMetrics
@@ -225,9 +231,21 @@ class AgentLoopOutput(BaseModel):
         if routed_experts is not None:
             output["routed_experts"] = torch.tensor(routed_experts, dtype=torch.int64)
 
-        # rm_scores: reward score for each token
+        rm_scores = output.pop("rm_scores", None)
+        if rm_scores is not None:
+            output["rm_scores"] = torch.tensor(rm_scores, dtype=torch.float32)
+
+        step_reward_mask = output.pop("step_reward_mask", None)
+        if step_reward_mask is not None:
+            output["step_reward_mask"] = torch.tensor(step_reward_mask, dtype=torch.int64)
+
+        step_ids = output.pop("step_ids", None)
+        if step_ids is not None:
+            output["step_ids"] = torch.tensor(step_ids, dtype=torch.int64)
+
+        # Backward-compatible scalar reward fallback.
         reward_score = output.pop("reward_score", None)
-        if reward_score is not None:
+        if reward_score is not None and "rm_scores" not in output:
             rm_scores = torch.zeros_like(output["response_mask"], dtype=torch.float32)
             rm_scores[-1] = reward_score
             output["rm_scores"] = rm_scores
@@ -254,6 +272,12 @@ class _InternalAgentLoopOutput(AgentLoopOutput):
     """Padded attention mask."""
     response_logprobs: Optional[torch.Tensor] = None
     """Padded log probabilities for the response tokens."""
+    rm_scores: Optional[torch.Tensor] = None
+    """Optional padded token-level reward scores."""
+    step_reward_mask: Optional[torch.Tensor] = None
+    """Optional padded mask for step-level reward anchor tokens."""
+    step_ids: Optional[torch.Tensor] = None
+    """Optional padded step ids aligned with response tokens."""
     teacher_logprobs: Optional[torch.Tensor] = None
     """Padded log probabilities from teacher model for prompt/response tokens."""
     teacher_ids: Optional[torch.Tensor] = None
@@ -703,9 +727,30 @@ class AgentLoopWorker:
             pad_size = self.rollout_config.response_length - len(output.response_logprobs)
             response_logprobs = torch.tensor(output.response_logprobs + [0.0] * pad_size).unsqueeze(0)
 
+        precomputed_rm_scores = None
+        if output.rm_scores is not None:
+            pad_size = self.rollout_config.response_length - len(output.rm_scores)
+            precomputed_rm_scores = torch.tensor(output.rm_scores + [0.0] * pad_size, dtype=torch.float32).unsqueeze(0)
+
+        step_reward_mask = None
+        if output.step_reward_mask is not None:
+            pad_size = self.rollout_config.response_length - len(output.step_reward_mask)
+            step_reward_mask = torch.tensor(output.step_reward_mask + [0] * pad_size, dtype=torch.int64).unsqueeze(0)
+
+        step_ids = None
+        if output.step_ids is not None:
+            pad_size = self.rollout_config.response_length - len(output.step_ids)
+            step_ids = torch.tensor(output.step_ids + [0] * pad_size, dtype=torch.int64).unsqueeze(0)
+
         response_mask = response_mask_output["input_ids"] * response_output["attention_mask"]
         attention_mask = torch.cat([prompt_output["attention_mask"], response_output["attention_mask"]], dim=1)
         input_ids = torch.cat([prompt_output["input_ids"], response_output["input_ids"]], dim=1)
+        if precomputed_rm_scores is not None:
+            precomputed_rm_scores = precomputed_rm_scores * response_output["attention_mask"]
+        if step_reward_mask is not None:
+            step_reward_mask = step_reward_mask * response_output["attention_mask"]
+        if step_ids is not None:
+            step_ids = step_ids * response_output["attention_mask"]
 
         routed_experts = None
         if output.routed_experts is not None:
@@ -783,6 +828,9 @@ class AgentLoopWorker:
             teacher_logprobs=teacher_logprobs,
             teacher_ids=teacher_ids,
             reward_score=output.reward_score,
+            rm_scores=precomputed_rm_scores,
+            step_reward_mask=step_reward_mask,
+            step_ids=step_ids,
             num_turns=output.num_turns,
             metrics=output.metrics,
             extra_fields=output.extra_fields,
@@ -914,6 +962,12 @@ class AgentLoopWorker:
         optional_outputs = {}
         if inputs[0].response_logprobs is not None:
             optional_outputs["rollout_log_probs"] = torch.cat([input.response_logprobs for input in inputs], dim=0)
+        if inputs[0].rm_scores is not None:
+            optional_outputs["rm_scores"] = torch.cat([input.rm_scores for input in inputs], dim=0)
+        if inputs[0].step_reward_mask is not None:
+            optional_outputs["step_reward_mask"] = torch.cat([input.step_reward_mask for input in inputs], dim=0)
+        if inputs[0].step_ids is not None:
+            optional_outputs["step_ids"] = torch.cat([input.step_ids for input in inputs], dim=0)
         if inputs[0].routed_experts is not None:
             optional_outputs["routed_experts"] = torch.cat([input.routed_experts for input in inputs], dim=0)
         if inputs[0].teacher_logprobs is not None and inputs[0].teacher_ids is not None:
@@ -934,7 +988,7 @@ class AgentLoopWorker:
         )
 
         scores = [input.reward_score for input in inputs]
-        if all(score is not None for score in scores):
+        if "rm_scores" not in batch.keys() and all(score is not None for score in scores):
             prompt_length = prompt_ids.size(1)
             response_length = attention_mask[:, prompt_length:].sum(dim=1) - 1
             rm_scores = torch.zeros_like(response_mask, dtype=torch.float32)

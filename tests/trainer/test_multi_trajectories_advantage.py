@@ -84,3 +84,57 @@ def test_compute_advantage_for_multi_trajectories(batch_data: DataProto):
     )
     assert torch.equal(result.batch["advantages"], adv_expected)
     assert torch.equal(result.batch["returns"], adv_expected)
+
+
+def test_compute_advantage_cross_steps():
+    batch = DataProto.from_dict(
+        tensors={
+            "token_level_rewards": torch.tensor(
+                [
+                    [0.0, 1.0, 0.0, 3.0, 0.0],
+                    [0.0, 2.0, 0.0, 4.0, 0.0],
+                ],
+                dtype=torch.float32,
+            ),
+            "response_mask": torch.tensor(
+                [
+                    [1, 1, 0, 1, 0],
+                    [1, 1, 0, 1, 0],
+                ],
+                dtype=torch.long,
+            ),
+            "step_reward_mask": torch.tensor(
+                [
+                    [0, 1, 0, 1, 0],
+                    [0, 1, 0, 1, 0],
+                ],
+                dtype=torch.long,
+            ),
+            "step_ids": torch.tensor(
+                [
+                    [1, 1, 0, 2, 0],
+                    [1, 1, 0, 2, 0],
+                ],
+                dtype=torch.long,
+            ),
+        },
+        non_tensors={
+            "uid": np.array(["prompt_a", "prompt_a"], dtype=object),
+        },
+    )
+
+    result = compute_advantage(
+        batch,
+        adv_estimator=AdvantageEstimator.GRPO,
+        config={"compute_mean_std_cross_steps": True},
+    )
+
+    expected = torch.tensor(
+        [
+            [-1.1619, -1.1619, 0.0, 0.3873, 0.0],
+            [-0.3873, -0.3873, 0.0, 1.1619, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(result.batch["advantages"], expected, atol=1e-4)
+    assert torch.allclose(result.batch["returns"], expected, atol=1e-4)

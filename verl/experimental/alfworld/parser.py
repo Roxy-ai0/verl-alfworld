@@ -16,6 +16,7 @@ import re
 
 
 ACTION_RE = re.compile(r"<action>\s*(.*?)\s*</action>", re.IGNORECASE | re.DOTALL)
+THINK_RE = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)
 
 
 def normalize_action(text: str) -> str:
@@ -32,27 +33,58 @@ def choose_fallback_action(admissible_actions: list[str]) -> str:
     return admissible_actions[0]
 
 
-def parse_action(output_text: str, admissible_actions: list[str]) -> tuple[str, dict]:
+def parse_action(
+    output_text: str,
+    admissible_actions: list[str],
+    *,
+    require_think_tags: bool = False,
+) -> tuple[str, dict]:
     if not admissible_actions:
         raise ValueError("admissible_actions must be non-empty")
 
     normalized_actions = {normalize_action(action): action for action in admissible_actions}
-    matches = ACTION_RE.findall(output_text or "")
+    text = output_text or ""
+    has_think = THINK_RE.search(text) is not None
+    matches = ACTION_RE.findall(text)
+    has_action = bool(matches)
     raw_action = matches[-1].strip() if matches else ""
     raw_action = raw_action.strip("`").strip().strip("\"'")
     normalized = normalize_action(raw_action)
+    is_admissible = normalized in normalized_actions
 
-    if normalized in normalized_actions:
+    invalid_reasons: list[str] = []
+    if require_think_tags and not has_think:
+        invalid_reasons.append("missing_think")
+    if not has_action:
+        invalid_reasons.append("missing_action")
+    elif not is_admissible:
+        invalid_reasons.append("action_not_admissible")
+
+    parse_error = (not has_action) or (not is_admissible)
+
+    if is_admissible:
         return normalized_actions[normalized], {
             "raw_action": raw_action,
-            "parse_error": False,
+            "parse_error": parse_error,
             "fallback_used": False,
+            "think_found": has_think,
+            "action_found": has_action,
+            "action_is_admissible": True,
+            "invalid": bool(invalid_reasons),
+            "invalid_reason": invalid_reasons[0] if invalid_reasons else None,
+            "invalid_reasons": invalid_reasons,
         }
 
     fallback_action = choose_fallback_action(admissible_actions)
     return fallback_action, {
         "raw_action": raw_action,
-        "parse_error": True,
+        "parse_error": parse_error,
         "fallback_used": True,
         "fallback_action": fallback_action,
+        "think_found": has_think,
+        "action_found": has_action,
+        "action_is_admissible": False,
+        "invalid": bool(invalid_reasons),
+        "invalid_reason": invalid_reasons[0] if invalid_reasons else None,
+        "invalid_reasons": invalid_reasons,
     }

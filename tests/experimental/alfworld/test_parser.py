@@ -15,19 +15,40 @@
 from verl.experimental.alfworld.parser import parse_action
 
 
-def test_parse_action_exact_match():
+def test_parse_action_requires_think_tag():
     action, meta = parse_action(
-        "<think>go there</think>\n<action>go to fridge 1</action>",
-        ["look", "go to fridge 1"],
+        "<action>look</action>",
+        ["look", "inventory"],
+        require_think_tags=True,
     )
-    assert action == "go to fridge 1"
+
+    assert action == "look"
     assert meta["fallback_used"] is False
+    assert meta["invalid"] is True
+    assert meta["invalid_reason"] == "missing_think"
 
 
-def test_parse_action_fallback_to_look():
+def test_parse_action_reports_missing_action():
     action, meta = parse_action(
-        "<think>invalid</think>\n<action>fly to moon</action>",
-        ["open cabinet 1", "look", "inventory"],
+        "<think>I should inspect the room.</think>",
+        ["look", "inventory"],
+        require_think_tags=True,
     )
+
     assert action == "look"
     assert meta["fallback_used"] is True
+    assert meta["invalid"] is True
+    assert meta["invalid_reason"] == "missing_action"
+
+
+def test_parse_action_reports_non_admissible_action():
+    action, meta = parse_action(
+        "<think>I will try something.</think><action>open fridge</action>",
+        ["look", "inventory"],
+        require_think_tags=True,
+    )
+
+    assert action == "look"
+    assert meta["fallback_used"] is True
+    assert meta["invalid"] is True
+    assert meta["invalid_reason"] == "action_not_admissible"
