@@ -6,7 +6,7 @@ REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
 
 MODEL_PATH=${MODEL_PATH:-/storage/v-jinpewang/az_workspace/zhanglin/reproduction/lwb/model/Qwen2.5-1.5B-Instruct}
 ALFWORLD_DATA_ROOT=${ALFWORLD_DATA_ROOT:-/storage/v-jinpewang/az_workspace/zhanglin/reproduction/lwb/data}
-DATA_DIR=${DATA_DIR:-${REPO_ROOT}/data/alfworld_prompt_grpo}
+DATA_DIR=${DATA_DIR:-/storage/v-jinpewang/az_workspace/zhanglin/reproduction/lwb/data/alfworld_prompt_grpo}
 TRAIN_FILE=${TRAIN_FILE:-${DATA_DIR}/train.parquet}
 VAL_FILE=${VAL_FILE:-${DATA_DIR}/valid_unseen.parquet}
 AGENT_LOOP_CONFIG=${AGENT_LOOP_CONFIG:-${REPO_ROOT}/examples/alfworld_agentloop/config/agent_loops.yaml}
