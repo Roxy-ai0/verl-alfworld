@@ -94,6 +94,13 @@ calculate_entropy: false
 # Whether to use KL loss instead of KL reward penalty. True for GRPO
 use_kl_loss: false
 
+# Whether to expose invalid-action penalty related settings to Hydra.
+# For the ALFWorld prompt-agent loop, the actual step penalty is already baked into rm_scores.
+use_invalid_action_penalty: false
+
+# Coefficient placeholder kept for config compatibility with training scripts.
+invalid_action_penalty_coef: 0.0
+
 # Whether to enable PrefixGrouper shared-prefix forward
 use_prefix_grouper: false
 
