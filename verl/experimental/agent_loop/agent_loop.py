@@ -85,6 +85,26 @@ def _pad_tensor_batch(
     return torch.cat(padded_tensors, dim=0)
 
 
+def _pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple[int, ...], pad_value: int | float = 0) -> torch.Tensor:
+    """Right-pad a tensor on non-batch dimensions to target_shape."""
+    if tensor.shape == target_shape:
+        return tensor
+
+    if tensor.dim() != len(target_shape):
+        raise ValueError(f"Tensor rank mismatch: {tensor.shape=} {target_shape=}")
+
+    pad_cfg: list[int] = []
+    for dim in range(tensor.dim() - 1, -1, -1):
+        if dim == 0:
+            pad_cfg.extend([0, 0])
+            continue
+        pad_len = target_shape[dim] - tensor.shape[dim]
+        if pad_len < 0:
+            raise ValueError(f"Target shape must be >= tensor shape: {tensor.shape=} {target_shape=}")
+        pad_cfg.extend([0, pad_len])
+    return F.pad(tensor, tuple(pad_cfg), value=pad_value)
+
+
 @ray.remote
 class GlobalRequestLoadBalancer:
     """Global sticky-session + in-flight load balancer shared by all AgentLoopWorkers."""
@@ -1267,6 +1287,70 @@ class AgentLoopManager:
             max_cache_size=DEFAULT_ROUTING_CACHE_SIZE,
         )
 
+    def _pad_worker_outputs(self, outputs: list[DataProto]) -> list[DataProto]:
+        """Pad worker-local DataProto batches to common shapes before concat."""
+        if not outputs or outputs[0].batch is None:
+            return outputs
+
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        pad_values = {
+            "prompts": pad_token_id,
+            "responses": pad_token_id,
+            "input_ids": pad_token_id,
+            "teacher_ids": pad_token_id,
+            "attention_mask": 0,
+            "response_mask": 0,
+            "position_ids": 0,
+            "rollout_log_probs": 0.0,
+            "rm_scores": 0.0,
+            "step_reward_mask": 0,
+            "step_ids": 0,
+            "teacher_logprobs": 0.0,
+            "routed_experts": 0,
+        }
+
+        all_keys = set()
+        for output in outputs:
+            all_keys.update(output.batch.keys())
+
+        max_shapes: dict[str, tuple[int, ...]] = {}
+        for key in all_keys:
+            tensors = [output.batch[key] for output in outputs if key in output.batch.keys()]
+            if not tensors:
+                continue
+            rank = tensors[0].dim()
+            max_shape = list(tensors[0].shape)
+            for tensor in tensors[1:]:
+                if tensor.dim() != rank:
+                    raise ValueError(f"Inconsistent tensor rank for key {key}: {tensor.dim()} vs {rank}")
+                for dim in range(1, rank):
+                    max_shape[dim] = max(max_shape[dim], tensor.shape[dim])
+            max_shapes[key] = tuple(max_shape)
+
+        padded_outputs: list[DataProto] = []
+        for output in outputs:
+            if output.batch is None:
+                padded_outputs.append(output)
+                continue
+
+            padded_batch = output.batch.clone()
+            for key, target_shape in max_shapes.items():
+                if key not in padded_batch.keys():
+                    continue
+                padded_batch[key] = _pad_tensor_to_shape(
+                    padded_batch[key],
+                    target_shape,
+                    pad_values.get(key, 0),
+                )
+            padded_outputs.append(
+                DataProto(
+                    batch=padded_batch,
+                    non_tensor_batch=output.non_tensor_batch,
+                    meta_info=output.meta_info,
+                )
+            )
+        return padded_outputs
+
     @auto_await
     async def generate_sequences(self, prompts: DataProto) -> DataProto:
         """Split input batch and dispatch to agent loop workers.
@@ -1288,6 +1372,7 @@ class AgentLoopManager:
         )
         if self.stream_teacher_with_rollout:
             await self.teacher_model_manager.sleep()
+        outputs = self._pad_worker_outputs(outputs)
         output = DataProto.concat(outputs)
 
         # calculate performance metrics
