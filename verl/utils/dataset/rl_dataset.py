@@ -156,7 +156,21 @@ class RLHFDataset(Dataset):
         for parquet_file in self.data_files:
             # read files and cache
             if parquet_file.endswith(".parquet"):
-                dataframe = datasets.load_dataset("parquet", data_files=parquet_file, cache_dir=self.cache_dir)["train"]
+                try:
+                    dataframe = datasets.load_dataset("parquet", data_files=parquet_file, cache_dir=self.cache_dir)[
+                        "train"
+                    ]
+                except OSError as e:
+                    if "Not enough disk space" not in str(e):
+                        raise
+                    import pyarrow.parquet as pq
+
+                    logger.warning(
+                        "Falling back to direct PyArrow parquet loading for %s because datasets cache init failed: %s",
+                        parquet_file,
+                        e,
+                    )
+                    dataframe = datasets.Dataset(pq.read_table(parquet_file))
             elif parquet_file.endswith(".json") or parquet_file.endswith(".jsonl"):
                 dataframe = datasets.load_dataset("json", data_files=parquet_file, cache_dir=self.cache_dir)["train"]
             else:
