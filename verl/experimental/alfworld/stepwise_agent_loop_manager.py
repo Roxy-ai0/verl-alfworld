@@ -64,12 +64,13 @@ class ALFWorldStepwiseAgentLoopWorker(AgentLoopWorker):
         tasks = []
         for i in range(len(batch)):
             kwargs = {k: v[i] for k, v in batch.non_tensor_batch.items()}
+            agent_name = str(kwargs.pop("agent_name"))
             tasks.append(
                 asyncio.create_task(
                     self._run_agent_loop_stepwise(
                         sampling_params,
                         trajectory_info[i],
-                        agent_name=str(kwargs["agent_name"]),
+                        agent_name=agent_name,
                         trace=i in traced_indices,
                         **kwargs,
                     )
