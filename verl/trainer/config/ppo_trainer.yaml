@@ -133,6 +133,15 @@ trainer:
   # Logging backends to use: "console", "wandb", etc.
   logger: ["console", "wandb"]
 
+  # Optional W&B tags.
+  wandb_tags: []
+
+  # Logging frequency.
+  log_freq: 1
+
+  # Unit for logging frequency: "step" or "epoch".
+  log_freq_unit: step
+
   # Number of generations to log during validation
   log_val_generations: 0
 
@@ -150,6 +159,9 @@ trainer:
 
   # Save frequency (by iteration) for model checkpoints
   save_freq: -1
+
+  # Unit for save frequency: "step" or "epoch".
+  save_freq_unit: step
 
   # ESI refers to the elastic server instance used during training, similar to the training plan. For example,
   # if you purchase 10 hours of computing power, the ESI will automatically shut down after 10 hours of training.
@@ -175,6 +187,12 @@ trainer:
 
   # Validation frequency (in training iterations)
   test_freq: -1
+
+  # Unit for validation frequency: "step" or "epoch".
+  test_freq_unit: step
+
+  # Progress bar unit: "step" or "epoch".
+  progress_bar_unit: step
 
   # Number of iterations to warm up the critic before updating policy
   critic_warmup: 0

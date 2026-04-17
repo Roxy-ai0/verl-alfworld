@@ -34,6 +34,12 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
 from verl import DataProto
+from verl.experimental.alfworld.wandb_utils import (
+    ALFWorldWandbHelper,
+    extract_alfworld_episode_metrics,
+    extract_eval_category_metrics,
+    extract_train_loss_alias_metrics,
+)
 from verl.experimental.dataset.sampler import AbstractCurriculumSampler
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.single_controller.ray import RayClassWithInitArgs, RayWorkerGroup, ResourcePoolManager
@@ -386,7 +392,8 @@ class RayPPOTrainer:
             f"{len(self.val_dataloader)}"
         )
 
-        total_training_steps = len(self.train_dataloader) * self.config.trainer.total_epochs
+        self.steps_per_epoch = len(self.train_dataloader)
+        total_training_steps = self.steps_per_epoch * self.config.trainer.total_epochs
 
         if self.config.trainer.total_training_steps is not None:
             total_training_steps = self.config.trainer.total_training_steps
@@ -637,6 +644,8 @@ class RayPPOTrainer:
         for key_info, lst in reward_extra_infos_dict.items():
             assert len(lst) == 0 or len(lst) == len(sample_scores), f"{key_info}: {len(lst)=}, {len(sample_scores)=}"
 
+        self._last_validation_reward_extra_infos = reward_extra_infos_dict
+
         if merged:
             print("_merge_validation_results validate result will be merged")
             return {
@@ -673,6 +682,9 @@ class RayPPOTrainer:
             metric_dict["val-aux/num_turns/max"] = sample_turns.max()
             metric_dict["val-aux/num_turns/mean"] = sample_turns.mean()
 
+        metric_dict.update(extract_alfworld_episode_metrics(reward_extra_infos_dict, split="eval"))
+        metric_dict.update(extract_eval_category_metrics(reward_extra_infos_dict))
+
         return metric_dict
 
     def _merge_validation_results(self, result_a, result_b):
@@ -698,6 +710,37 @@ class RayPPOTrainer:
             reward_extra_infos_dict[key] = list_a + list_b
 
         return self._val_metrics_update(data_sources, sample_uids, reward_extra_infos_dict, sample_turns)
+
+    def _get_unit_mode(self, key: str, default: str = "step") -> str:
+        value = str(self.config.trainer.get(key, default)).lower()
+        if value not in {"step", "epoch"}:
+            raise ValueError(f"Unsupported trainer unit mode for {key}: {value}")
+        return value
+
+    def _should_trigger(self, *, freq: int, unit: str, epoch: int, is_epoch_end: bool, is_last_step: bool) -> bool:
+        if freq <= 0:
+            return False
+        if unit == "epoch":
+            return is_epoch_end and (is_last_step or (epoch + 1) % freq == 0)
+        return is_last_step or self.global_steps % freq == 0
+
+    def _accumulate_epoch_metrics(self, epoch_metrics_buffer: dict[str, list[float]], metrics: dict[str, Any]) -> None:
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, np.integer, np.floating, bool)):
+                epoch_metrics_buffer[key].append(float(value))
+
+    def _reduce_epoch_metrics(self, epoch_metrics_buffer: dict[str, list[float]]) -> dict[str, float]:
+        reduced: dict[str, float] = {}
+        for key, values in epoch_metrics_buffer.items():
+            if not values:
+                continue
+            if "max" in key:
+                reduced[key] = float(np.max(values))
+            elif "min" in key:
+                reduced[key] = float(np.min(values))
+            else:
+                reduced[key] = float(np.mean(values))
+        return reduced
 
     def init_workers(self):
         """Initialize distributed training workers using Ray backend.
@@ -1307,6 +1350,14 @@ class RayPPOTrainer:
             default_backend=self.config.trainer.logger,
             config=OmegaConf.to_container(self.config, resolve=True),
         )
+        alfworld_wandb = ALFWorldWandbHelper(logger)
+        alfworld_wandb.configure()
+
+        log_freq = int(self.config.trainer.get("log_freq", 1))
+        log_freq_unit = self._get_unit_mode("log_freq_unit", default="step")
+        save_freq_unit = self._get_unit_mode("save_freq_unit", default="step")
+        test_freq_unit = self._get_unit_mode("test_freq_unit", default="step")
+        progress_bar_unit = self._get_unit_mode("progress_bar_unit", default="step")
 
         self.global_steps = 0
 
@@ -1322,7 +1373,12 @@ class RayPPOTrainer:
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
-            logger.log(data=val_metrics, step=self.global_steps)
+            initial_log_step = current_epoch if progress_bar_unit == "epoch" else self.global_steps
+            val_metrics["trainer/episode"] = initial_log_step
+            logger.log(data=val_metrics, step=initial_log_step)
+            alfworld_wandb.update_summary(
+                "eval", getattr(self, "_last_validation_reward_extra_infos", {}), val_metrics
+            )
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -1331,7 +1387,9 @@ class RayPPOTrainer:
             rollout_skip.wrap_generate_sequences()
 
         # add tqdm
-        progress_bar = tqdm(total=self.total_training_steps, initial=self.global_steps, desc="Training Progress")
+        progress_total = self.config.trainer.total_epochs if progress_bar_unit == "epoch" else self.total_training_steps
+        progress_initial = current_epoch if progress_bar_unit == "epoch" else self.global_steps
+        progress_bar = tqdm(total=progress_total, initial=progress_initial, desc="Training Progress")
 
         # we start from step 1
         self.global_steps += 1
@@ -1347,7 +1405,9 @@ class RayPPOTrainer:
         next_step_profile = False
 
         for epoch in range(current_epoch, self.config.trainer.total_epochs):
-            for batch_dict in self.train_dataloader:
+            epoch_metrics_buffer: dict[str, list[float]] = defaultdict(list)
+            last_train_reward_info: dict[str, Any] = {}
+            for step_in_epoch, batch_dict in enumerate(self.train_dataloader):
                 if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
                     self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=False)
                 metrics = {}
@@ -1376,6 +1436,7 @@ class RayPPOTrainer:
                 )
 
                 is_last_step = self.global_steps >= self.total_training_steps
+                is_epoch_end = step_in_epoch == self.steps_per_epoch - 1
                 with marked_timer("step", timing_raw):
                     # generate a batch
                     with marked_timer("gen", timing_raw, color="red"):
@@ -1588,11 +1649,14 @@ class RayPPOTrainer:
                         # 2. It's the last training step.
                         # 3. The current step number is a multiple of the save frequency.
                         # 4. The ESI(Elastic Server Instance)/training plan is close to expiration.
-                        if self.config.trainer.save_freq > 0 and (
-                            is_last_step
-                            or self.global_steps % self.config.trainer.save_freq == 0
-                            or esi_close_to_expiration
-                        ):
+                        should_save = self._should_trigger(
+                            freq=int(self.config.trainer.save_freq),
+                            unit=save_freq_unit,
+                            epoch=epoch,
+                            is_epoch_end=is_epoch_end,
+                            is_last_step=is_last_step,
+                        )
+                        if self.config.trainer.save_freq > 0 and (should_save or esi_close_to_expiration):
                             if esi_close_to_expiration:
                                 print("Force saving checkpoint: ESI instance expiration approaching.")
                             with marked_timer("save_checkpoint", timing_raw, color="green"):
@@ -1611,14 +1675,21 @@ class RayPPOTrainer:
                         self._log_rollout_data(batch, reward_extra_infos_dict, timing_raw, rollout_data_dir)
 
                 # validate
-                if self.config.trainer.test_freq > 0 and (
-                    is_last_step or self.global_steps % self.config.trainer.test_freq == 0
+                if self._should_trigger(
+                    freq=int(self.config.trainer.test_freq),
+                    unit=test_freq_unit,
+                    epoch=epoch,
+                    is_epoch_end=is_epoch_end,
+                    is_last_step=is_last_step,
                 ):
                     with marked_timer("testing", timing_raw, color="green"):
                         val_metrics: dict = self._validate()
                         if is_last_step:
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
+                    alfworld_wandb.update_summary(
+                        "eval", getattr(self, "_last_validation_reward_extra_infos", {}), val_metrics
+                    )
 
                 with marked_timer("stop_profile", timing_raw):
                     next_step_profile = (
@@ -1663,16 +1734,31 @@ class RayPPOTrainer:
                 # compute variance proxy metrics
                 gradient_norm = metrics.get("actor/grad_norm", None)
                 metrics.update(compute_variance_proxy_metrics(batch=batch, gradient_norm=gradient_norm))
+                metrics.update(extract_alfworld_episode_metrics(reward_extra_infos_dict, split="train", batch=batch))
+                metrics.update(extract_train_loss_alias_metrics(metrics))
+                metrics["trainer/episode"] = epoch + 1
+                last_train_reward_info = reward_extra_infos_dict
+                alfworld_wandb.update_raw_summary("train", reward_extra_infos_dict)
                 # Note: mismatch metrics (KL, PPL, etc.) are collected at line 1179 after advantage computation
 
                 # this is experimental and may be changed/removed in the future in favor of a general-purpose one
                 if isinstance(self.train_dataloader.sampler, AbstractCurriculumSampler):
                     self.train_dataloader.sampler.update(batch=batch)
 
-                # TODO: make a canonical logger that supports various backend
-                logger.log(data=metrics, step=self.global_steps)
+                if log_freq_unit == "epoch":
+                    self._accumulate_epoch_metrics(epoch_metrics_buffer, metrics)
+                elif log_freq > 0 and self._should_trigger(
+                    freq=log_freq,
+                    unit=log_freq_unit,
+                    epoch=epoch,
+                    is_epoch_end=is_epoch_end,
+                    is_last_step=is_last_step,
+                ):
+                    logger.log(data=metrics, step=self.global_steps)
+                    alfworld_wandb.update_summary("train", reward_extra_infos_dict, metrics)
 
-                progress_bar.update(1)
+                if progress_bar_unit == "step":
+                    progress_bar.update(1)
                 self.global_steps += 1
 
                 if (
@@ -1684,6 +1770,15 @@ class RayPPOTrainer:
                     )
 
                 if is_last_step:
+                    if log_freq_unit == "epoch" and epoch_metrics_buffer:
+                        epoch_metrics = self._reduce_epoch_metrics(epoch_metrics_buffer)
+                        epoch_metrics["training/global_step"] = self.global_steps - 1
+                        epoch_metrics["training/epoch"] = epoch + 1
+                        epoch_metrics["trainer/episode"] = epoch + 1
+                        logger.log(data=epoch_metrics, step=epoch + 1)
+                        alfworld_wandb.update_summary("train", last_train_reward_info, epoch_metrics)
+                    if progress_bar_unit == "epoch":
+                        progress_bar.update(1)
                     if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
                         self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=True)
                     pprint(f"Final validation metrics: {last_val_metrics}")
@@ -1695,3 +1790,14 @@ class RayPPOTrainer:
                 if hasattr(self.train_dataset, "on_batch_end"):
                     # The dataset may be changed after each training batch
                     self.train_dataset.on_batch_end(batch=batch)
+
+            if log_freq_unit == "epoch" and epoch_metrics_buffer and log_freq > 0 and (epoch + 1) % log_freq == 0:
+                epoch_metrics = self._reduce_epoch_metrics(epoch_metrics_buffer)
+                epoch_metrics["training/global_step"] = self.global_steps - 1
+                epoch_metrics["training/epoch"] = epoch + 1
+                epoch_metrics["trainer/episode"] = epoch + 1
+                logger.log(data=epoch_metrics, step=epoch + 1)
+                alfworld_wandb.update_summary("train", last_train_reward_info, epoch_metrics)
+
+            if progress_bar_unit == "epoch":
+                progress_bar.update(1)

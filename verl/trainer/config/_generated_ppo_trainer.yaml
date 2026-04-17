@@ -784,18 +784,24 @@ trainer:
   logger:
   - console
   - wandb
+  wandb_tags: []
+  log_freq: 1
+  log_freq_unit: step
   log_val_generations: 0
   rollout_data_dir: null
   validation_data_dir: null
   nnodes: 1
   n_gpus_per_node: 8
   save_freq: -1
+  save_freq_unit: step
   esi_redundant_time: 0
   resume_mode: auto
   resume_from_path: null
   val_before_train: true
   val_only: false
   test_freq: -1
+  test_freq_unit: step
+  progress_bar_unit: step
   critic_warmup: 0
   default_hdfs_dir: null
   del_local_ckpt_after_load: false

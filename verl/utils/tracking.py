@@ -77,7 +77,17 @@ class Tracking:
             if config and config["trainer"].get("wandb_proxy", None):
                 settings = wandb.Settings(https_proxy=config["trainer"]["wandb_proxy"])
             entity = os.environ.get("WANDB_ENTITY", None)
-            wandb.init(project=project_name, name=experiment_name, entity=entity, config=config, settings=settings)
+            tags = None
+            if config and config["trainer"].get("wandb_tags", None):
+                tags = list(config["trainer"]["wandb_tags"])
+            wandb.init(
+                project=project_name,
+                name=experiment_name,
+                entity=entity,
+                config=config,
+                settings=settings,
+                tags=tags,
+            )
             self.logger["wandb"] = wandb
 
         if "trackio" in default_backend:
@@ -182,6 +192,12 @@ class Tracking:
         for default_backend, logger_instance in self.logger.items():
             if backend is None or default_backend in backend:
                 logger_instance.log(data=data, step=step)
+
+    def get_backend(self, backend: str):
+        return self.logger.get(backend)
+
+    def has_backend(self, backend: str) -> bool:
+        return backend in self.logger
 
     def __del__(self):
         if "wandb" in self.logger:

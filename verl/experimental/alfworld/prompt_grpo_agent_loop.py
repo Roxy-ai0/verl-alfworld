@@ -24,6 +24,7 @@ from .direct_agent_loop import ALFWorldDirectAgentLoop
 from .env import ALFWorldTextEnv
 from .parser import parse_action
 from .prompt import build_prompt_grpo_prompt
+from .task_category import infer_alfworld_task_category
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
         final_reward = 0.0
         episode_reward = failure_reward_value
         error_message = None
+        task_category = infer_alfworld_task_category(gamefile=gamefile, task_description=task_description)
 
         try:
             state = env.reset()
@@ -232,6 +234,8 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
                 step_invalid_flags.append(step_invalid)
                 step_invalid_reasons.append(episode_trace[step_index].get("invalid_reason"))
 
+            mean_step_score = sum(step_scores) / len(step_scores) if step_scores else 0.0
+            invalid_rate = sum(step_invalid_flags) / len(step_invalid_flags) if step_invalid_flags else 0.0
             reward_extra_info = {
                 "acc": success,
                 "success": bool(success),
@@ -239,10 +243,10 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
                 "invalid_action_count": invalid_action_count,
                 "final_reward": final_reward,
                 "episode_reward": episode_reward,
-                "step_scores": step_scores,
-                "step_invalid_flags": step_invalid_flags,
-                "step_invalid_reasons": step_invalid_reasons,
+                "mean_step_score": mean_step_score,
+                "invalid_rate": invalid_rate,
                 "history_window": history_window,
+                "task_category": task_category,
                 "error": error_message,
             }
 
@@ -262,6 +266,8 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
 
             response_ids = full_sequence_ids[-len(response_mask) :]
             prompt_ids = full_sequence_ids[: len(full_sequence_ids) - len(response_mask)]
+            reward_extra_info["prompt_length"] = len(prompt_ids)
+            reward_extra_info["response_length"] = len(response_ids)
             metrics = AgentLoopMetrics(
                 generate_sequences=total_generate_time,
                 num_preempted=total_num_preempted if total_num_preempted is not None else -1,
@@ -279,6 +285,9 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
                 metrics=metrics,
                 extra_fields={
                     "episode_trace": episode_trace,
+                    "step_scores": step_scores,
+                    "step_invalid_flags": step_invalid_flags,
+                    "step_invalid_reasons": step_invalid_reasons,
                     "reward_extra_info": reward_extra_info,
                     "final_observation": last_observation,
                     "alfworld_task_description": task_description,
@@ -303,6 +312,9 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
                 metrics=AgentLoopMetrics(generate_sequences=total_generate_time, num_preempted=-1),
                 extra_fields={
                     "episode_trace": episode_trace,
+                    "step_scores": [],
+                    "step_invalid_flags": [],
+                    "step_invalid_reasons": [],
                     "reward_extra_info": {
                         "acc": 0.0,
                         "success": False,
@@ -310,10 +322,12 @@ class ALFWorldPromptGRPOAgentLoop(ALFWorldDirectAgentLoop):
                         "invalid_action_count": invalid_action_count,
                         "final_reward": final_reward,
                         "episode_reward": 0.0,
-                        "step_scores": [],
-                        "step_invalid_flags": [],
-                        "step_invalid_reasons": [],
+                        "mean_step_score": 0.0,
+                        "invalid_rate": 0.0,
                         "history_window": history_window,
+                        "task_category": task_category,
+                        "prompt_length": len(fallback_prompt_ids),
+                        "response_length": len(fallback_response_ids),
                         "error": str(exc),
                     },
                     "final_observation": last_observation,

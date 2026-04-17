@@ -10,15 +10,23 @@ DATA_DIR=${DATA_DIR:-/storage/v-jinpewang/az_workspace/zhanglin/reproduction/lwb
 TRAIN_FILE=${TRAIN_FILE:-${DATA_DIR}/train.parquet}
 VAL_FILE=${VAL_FILE:-${DATA_DIR}/valid_unseen.parquet}
 AGENT_LOOP_CONFIG=${AGENT_LOOP_CONFIG:-${REPO_ROOT}/examples/alfworld_agentloop/config/agent_loops.yaml}
+PROJECT_NAME=${PROJECT_NAME:-verl_alfworld_prompt_grpo}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwen2_5_1_5b_prompt_agentloop_grpo}
+LOGGER_BACKENDS=${LOGGER_BACKENDS:-'["console","wandb"]'}
+WANDB_TAGS=${WANDB_TAGS:-'["alfworld","prompt_grpo","agent_loop"]'}
 
 MAX_STEPS=${MAX_STEPS:-50}
-TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
-PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}
-PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-4}
-ROLLOUT_LOGPROB_MB_PER_GPU=${ROLLOUT_LOGPROB_MB_PER_GPU:-8}
-REF_LOGPROB_MB_PER_GPU=${REF_LOGPROB_MB_PER_GPU:-8}
-AGENT_NUM_WORKERS=${AGENT_NUM_WORKERS:-2}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
+PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-1}
+ROLLOUT_LOGPROB_MB_PER_GPU=${ROLLOUT_LOGPROB_MB_PER_GPU:-2}
+REF_LOGPROB_MB_PER_GPU=${REF_LOGPROB_MB_PER_GPU:-2}
+AGENT_NUM_WORKERS=${AGENT_NUM_WORKERS:-1}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-150}
+ROLLOUT_N=${ROLLOUT_N:-4}
+VAL_ROLLOUT_N=${VAL_ROLLOUT_N:-2}
+SAVE_FREQ=${SAVE_FREQ:-20}
+TEST_FREQ=${TEST_FREQ:-10}
 
 mkdir -p "${DATA_DIR}"
 
@@ -67,7 +75,7 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.rollout.prompt_length=2048 \
   actor_rollout_ref.rollout.response_length=512 \
-  actor_rollout_ref.rollout.n=2 \
+  actor_rollout_ref.rollout.n="${ROLLOUT_N}" \
   actor_rollout_ref.rollout.temperature=0.4 \
   actor_rollout_ref.rollout.top_p=1.0 \
   actor_rollout_ref.rollout.top_k=-1 \
@@ -79,7 +87,7 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.agent.num_workers="${AGENT_NUM_WORKERS}" \
   actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_prompt_grpo_agent \
   actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
-  actor_rollout_ref.rollout.val_kwargs.n=2 \
+  actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
   actor_rollout_ref.rollout.val_kwargs.do_sample=True \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu="${REF_LOGPROB_MB_PER_GPU}" \
@@ -87,13 +95,19 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.ref.fsdp_config.dtype=float16 \
   reward.reward_model.enable=False \
   reward.reward_manager.name=naive \
-  trainer.project_name='verl_alfworld_prompt_grpo' \
-  trainer.experiment_name='qwen2_5_1_5b_prompt_agentloop_grpo' \
-  trainer.logger='["console"]' \
-  trainer.n_gpus_per_node=2 \
+  trainer.project_name="${PROJECT_NAME}" \
+  trainer.experiment_name="${EXPERIMENT_NAME}" \
+  trainer.logger="${LOGGER_BACKENDS}" \
+  trainer.wandb_tags="${WANDB_TAGS}" \
+  trainer.n_gpus_per_node=8 \
   trainer.nnodes=1 \
-  trainer.save_freq=20 \
-  trainer.test_freq=10 \
+  trainer.save_freq="${SAVE_FREQ}" \
+  trainer.save_freq_unit=epoch \
+  trainer.test_freq="${TEST_FREQ}" \
+  trainer.test_freq_unit=epoch \
+  trainer.log_freq=1 \
+  trainer.log_freq_unit=epoch \
+  trainer.progress_bar_unit=epoch \
   trainer.total_epochs="${TOTAL_EPOCHS}" \
   trainer.val_before_train=False \
   data.shuffle=True \
