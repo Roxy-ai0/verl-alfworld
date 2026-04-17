@@ -35,6 +35,7 @@ RAY_TMP_DIR=${RAY_TMP_DIR:-/tmp/ray_alfworld_prompt}
 DATA_CACHE_DIR=${DATA_CACHE_DIR:-${DATA_DIR}/rlhf_cache}
 HF_HOME=${HF_HOME:-${DATA_CACHE_DIR}/hf_home}
 HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-${DATA_CACHE_DIR}/datasets}
+FILTER_OVERLONG_PROMPTS_WORKERS=${FILTER_OVERLONG_PROMPTS_WORKERS:-1}
 AGENT_LOOP_NAME=${AGENT_LOOP_NAME:-alfworld_stepwise_prompt_grpo_agent}
 AGENT_LOOP_MANAGER_CLASS=${AGENT_LOOP_MANAGER_CLASS:-verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager}
 
@@ -68,6 +69,7 @@ echo "  ray.tmp_dir=${RAY_TMP_DIR}"
 echo "  data.cache_dir=${DATA_CACHE_DIR}"
 echo "  HF_HOME=${HF_HOME}"
 echo "  HF_DATASETS_CACHE=${HF_DATASETS_CACHE}"
+echo "  data.filter_overlong_prompts_workers=${FILTER_OVERLONG_PROMPTS_WORKERS}"
 echo "[ALFWorld stepwise] Expected post-start sanity checks:"
 echo "  - num_turns/mean ~= 2"
 echo "  - response_length/mean <= 512"
@@ -93,6 +95,7 @@ python -m verl.trainer.main_ppo \
   data.train_files="${TRAIN_FILE}" \
   data.val_files="${VAL_FILE}" \
   +data.cache_dir="${DATA_CACHE_DIR}" \
+  +data.filter_overlong_prompts_workers="${FILTER_OVERLONG_PROMPTS_WORKERS}" \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   data.val_batch_size=32 \
   data.max_prompt_length=2048 \

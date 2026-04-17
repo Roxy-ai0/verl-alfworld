@@ -283,11 +283,28 @@ class RLHFDataset(Dataset):
                         traceback.print_exc()
                         return self.max_prompt_length + 1
 
-            dataframe = dataframe.filter(
-                lambda doc: doc2len(doc) <= self.max_prompt_length,
-                num_proc=self.num_workers,
-                desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
-            )
+            filter_kwargs = {
+                "desc": f"Filtering prompts longer than {self.max_prompt_length} tokens",
+            }
+            if self.num_workers is not None and self.num_workers > 1:
+                filter_kwargs["num_proc"] = self.num_workers
+
+            try:
+                dataframe = dataframe.filter(
+                    lambda doc: doc2len(doc) <= self.max_prompt_length,
+                    **filter_kwargs,
+                )
+            except EOFError as e:
+                if "num_proc" not in filter_kwargs:
+                    raise
+                logger.warning(
+                    "Parallel prompt filtering failed with EOFError, retrying in-process with num_proc disabled: %s",
+                    e,
+                )
+                dataframe = dataframe.filter(
+                    lambda doc: doc2len(doc) <= self.max_prompt_length,
+                    desc=filter_kwargs["desc"],
+                )
 
             print(f"filter dataset len: {len(dataframe)}")
         return dataframe
