@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
+# Usage:
+#   1. Run this script directly after code changes to avoid reusing stale Ray workers:
+#        bash examples/alfworld_agentloop/train_grpo_prompt.sh
+#   2. By default the script will stop any existing Ray runtime first. This is intentional:
+#      the ALFWorld rollout worker code is loaded into Ray workers, so reusing old workers can
+#      silently keep running the previous non-stepwise agent loop implementation.
+#   3. If you really want to keep the current Ray runtime, set:
+#        RESET_RAY=0 bash examples/alfworld_agentloop/train_grpo_prompt.sh
+#   4. After startup, verify that logs match the stepwise implementation:
+#      - agent_loop = alfworld_stepwise_prompt_grpo_agent
+#      - agent_loop_manager = verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager
+#      - num_turns/mean should stay very close to 2
+#      - response_length/mean should stay <= 512
+#      If you see num_turns > 2 or response_length/mean > 512, you are almost certainly still
+#      running the old multi-turn prompt_grpo path via stale workers or stale config overrides.
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
 
@@ -27,15 +43,37 @@ ROLLOUT_N=${ROLLOUT_N:-4}
 VAL_ROLLOUT_N=${VAL_ROLLOUT_N:-2}
 SAVE_FREQ=${SAVE_FREQ:-20}
 TEST_FREQ=${TEST_FREQ:-10}
+RESET_RAY=${RESET_RAY:-1}
+AGENT_LOOP_NAME=${AGENT_LOOP_NAME:-alfworld_stepwise_prompt_grpo_agent}
+AGENT_LOOP_MANAGER_CLASS=${AGENT_LOOP_MANAGER_CLASS:-verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager}
 
 mkdir -p "${DATA_DIR}"
+
+if [[ "${RESET_RAY}" == "1" ]]; then
+  echo "[ALFWorld stepwise] Stopping existing Ray runtime to avoid stale non-stepwise workers."
+  ray stop -f || true
+else
+  echo "[ALFWorld stepwise] RESET_RAY=0, reusing current Ray runtime."
+fi
+
+echo "[ALFWorld stepwise] Launch configuration:"
+echo "  agent_loop=${AGENT_LOOP_NAME}"
+echo "  agent_loop_manager=${AGENT_LOOP_MANAGER_CLASS}"
+echo "  rollout.prompt_length=2048"
+echo "  rollout.response_length=512"
+echo "  rollout.n=${ROLLOUT_N}"
+echo "  validate.n=${VAL_ROLLOUT_N}"
+echo "[ALFWorld stepwise] Expected post-start sanity checks:"
+echo "  - num_turns/mean ~= 2"
+echo "  - response_length/mean <= 512"
+echo "  - prompt_length/mean <= 2048"
 
 if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
   python "${REPO_ROOT}/examples/alfworld_agentloop/preprocess_alfworld_direct.py" \
     --alfworld-data-root "${ALFWORLD_DATA_ROOT}" \
     --output-dir "${DATA_DIR}" \
     --splits train valid_unseen \
-    --agent-name alfworld_stepwise_prompt_grpo_agent \
+    --agent-name "${AGENT_LOOP_NAME}" \
     --max-steps "${MAX_STEPS}"
 fi
 
@@ -85,9 +123,9 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.data_parallel_size=1 \
   actor_rollout_ref.rollout.pipeline_model_parallel_size=1 \
   actor_rollout_ref.rollout.agent.num_workers="${AGENT_NUM_WORKERS}" \
-  actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_stepwise_prompt_grpo_agent \
+  actor_rollout_ref.rollout.agent.default_agent_loop="${AGENT_LOOP_NAME}" \
   actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
-  actor_rollout_ref.rollout.agent.agent_loop_manager_class=verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager \
+  actor_rollout_ref.rollout.agent.agent_loop_manager_class="${AGENT_LOOP_MANAGER_CLASS}" \
   actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
   actor_rollout_ref.rollout.val_kwargs.do_sample=True \
