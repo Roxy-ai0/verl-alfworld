@@ -724,6 +724,51 @@ class RayPPOTrainer:
             return is_epoch_end and (is_last_step or (epoch + 1) % freq == 0)
         return is_last_step or self.global_steps % freq == 0
 
+    @staticmethod
+    def _tracking_backends(tracking, *, exclude: set[str] | None = None) -> list[str]:
+        exclude = exclude or set()
+        return [backend for backend in tracking.logger.keys() if backend not in exclude]
+
+    def _log_non_wandb(self, tracking, data: dict[str, Any], *, step: int) -> None:
+        backends = self._tracking_backends(tracking, exclude={"wandb"})
+        if backends:
+            tracking.log(data=data, step=step, backend=backends)
+
+    def _log_wandb_step_metrics(
+        self,
+        tracking,
+        alfworld_wandb: ALFWorldWandbHelper,
+        metrics: dict[str, Any],
+        *,
+        global_step: int,
+        epoch: int,
+    ) -> None:
+        if not tracking.has_backend("wandb"):
+            return
+        tracking.log(
+            data=alfworld_wandb.build_step_metrics(metrics, global_step=global_step, epoch=epoch),
+            step=global_step,
+            backend=["wandb"],
+        )
+
+    def _log_wandb_epoch_metrics(
+        self,
+        tracking,
+        alfworld_wandb: ALFWorldWandbHelper,
+        metrics: dict[str, Any],
+        *,
+        global_step: int,
+        epoch: int,
+        step: int,
+    ) -> None:
+        if not tracking.has_backend("wandb"):
+            return
+        tracking.log(
+            data=alfworld_wandb.build_epoch_metrics(metrics, global_step=global_step, epoch=epoch),
+            step=step,
+            backend=["wandb"],
+        )
+
     def _accumulate_epoch_metrics(self, epoch_metrics_buffer: dict[str, list[float]], metrics: dict[str, Any]) -> None:
         for key, value in metrics.items():
             if isinstance(value, (int, float, np.integer, np.floating, bool)):
@@ -1373,9 +1418,22 @@ class RayPPOTrainer:
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
-            initial_log_step = current_epoch if progress_bar_unit == "epoch" else self.global_steps
-            val_metrics["trainer/episode"] = initial_log_step
-            logger.log(data=val_metrics, step=initial_log_step)
+            self._log_non_wandb(logger, val_metrics, step=self.global_steps)
+            self._log_wandb_epoch_metrics(
+                logger,
+                alfworld_wandb,
+                val_metrics,
+                global_step=self.global_steps,
+                epoch=current_epoch,
+                step=current_epoch,
+            )
+            self._log_wandb_step_metrics(
+                logger,
+                alfworld_wandb,
+                val_metrics,
+                global_step=self.global_steps,
+                epoch=current_epoch,
+            )
             alfworld_wandb.update_summary(
                 "eval", getattr(self, "_last_validation_reward_extra_infos", {}), val_metrics
             )
@@ -1687,6 +1745,21 @@ class RayPPOTrainer:
                         if is_last_step:
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
+                    self._log_wandb_epoch_metrics(
+                        logger,
+                        alfworld_wandb,
+                        val_metrics,
+                        global_step=self.global_steps,
+                        epoch=epoch + 1,
+                        step=epoch + 1,
+                    )
+                    self._log_wandb_step_metrics(
+                        logger,
+                        alfworld_wandb,
+                        val_metrics,
+                        global_step=self.global_steps,
+                        epoch=epoch + 1,
+                    )
                     alfworld_wandb.update_summary(
                         "eval", getattr(self, "_last_validation_reward_extra_infos", {}), val_metrics
                     )
@@ -1712,7 +1785,7 @@ class RayPPOTrainer:
                 metrics.update(
                     {
                         "training/global_step": self.global_steps,
-                        "training/epoch": epoch,
+                        "training/epoch": epoch + 1,
                     }
                 )
                 # collect metrics
@@ -1745,16 +1818,22 @@ class RayPPOTrainer:
                 if isinstance(self.train_dataloader.sampler, AbstractCurriculumSampler):
                     self.train_dataloader.sampler.update(batch=batch)
 
-                if log_freq_unit == "epoch":
-                    self._accumulate_epoch_metrics(epoch_metrics_buffer, metrics)
-                elif log_freq > 0 and self._should_trigger(
+                self._accumulate_epoch_metrics(epoch_metrics_buffer, metrics)
+                if log_freq > 0 and self._should_trigger(
                     freq=log_freq,
                     unit=log_freq_unit,
                     epoch=epoch,
                     is_epoch_end=is_epoch_end,
                     is_last_step=is_last_step,
                 ):
-                    logger.log(data=metrics, step=self.global_steps)
+                    self._log_non_wandb(logger, metrics, step=self.global_steps)
+                    self._log_wandb_step_metrics(
+                        logger,
+                        alfworld_wandb,
+                        metrics,
+                        global_step=self.global_steps,
+                        epoch=epoch + 1,
+                    )
                     alfworld_wandb.update_summary("train", reward_extra_infos_dict, metrics)
 
                 if progress_bar_unit == "step":
@@ -1770,12 +1849,20 @@ class RayPPOTrainer:
                     )
 
                 if is_last_step:
-                    if log_freq_unit == "epoch" and epoch_metrics_buffer:
+                    if epoch_metrics_buffer:
                         epoch_metrics = self._reduce_epoch_metrics(epoch_metrics_buffer)
                         epoch_metrics["training/global_step"] = self.global_steps - 1
                         epoch_metrics["training/epoch"] = epoch + 1
                         epoch_metrics["trainer/episode"] = epoch + 1
-                        logger.log(data=epoch_metrics, step=epoch + 1)
+                        self._log_non_wandb(logger, epoch_metrics, step=self.global_steps - 1)
+                        self._log_wandb_epoch_metrics(
+                            logger,
+                            alfworld_wandb,
+                            epoch_metrics,
+                            global_step=self.global_steps - 1,
+                            epoch=epoch + 1,
+                            step=epoch + 1,
+                        )
                         alfworld_wandb.update_summary("train", last_train_reward_info, epoch_metrics)
                     if progress_bar_unit == "epoch":
                         progress_bar.update(1)
@@ -1791,12 +1878,20 @@ class RayPPOTrainer:
                     # The dataset may be changed after each training batch
                     self.train_dataset.on_batch_end(batch=batch)
 
-            if log_freq_unit == "epoch" and epoch_metrics_buffer and log_freq > 0 and (epoch + 1) % log_freq == 0:
+            if epoch_metrics_buffer:
                 epoch_metrics = self._reduce_epoch_metrics(epoch_metrics_buffer)
                 epoch_metrics["training/global_step"] = self.global_steps - 1
                 epoch_metrics["training/epoch"] = epoch + 1
                 epoch_metrics["trainer/episode"] = epoch + 1
-                logger.log(data=epoch_metrics, step=epoch + 1)
+                self._log_non_wandb(logger, epoch_metrics, step=self.global_steps - 1)
+                self._log_wandb_epoch_metrics(
+                    logger,
+                    alfworld_wandb,
+                    epoch_metrics,
+                    global_step=self.global_steps - 1,
+                    epoch=epoch + 1,
+                    step=epoch + 1,
+                )
                 alfworld_wandb.update_summary("train", last_train_reward_info, epoch_metrics)
 
             if progress_bar_unit == "epoch":

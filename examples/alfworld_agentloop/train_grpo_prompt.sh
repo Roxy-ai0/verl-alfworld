@@ -17,7 +17,7 @@ WANDB_TAGS=${WANDB_TAGS:-'["alfworld","prompt_grpo","agent_loop"]'}
 
 MAX_STEPS=${MAX_STEPS:-50}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
-PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
 PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-4}
 ROLLOUT_LOGPROB_MB_PER_GPU=${ROLLOUT_LOGPROB_MB_PER_GPU:-2}
 REF_LOGPROB_MB_PER_GPU=${REF_LOGPROB_MB_PER_GPU:-2}
@@ -106,8 +106,8 @@ python -m verl.trainer.main_ppo \
   trainer.test_freq="${TEST_FREQ}" \
   trainer.test_freq_unit=epoch \
   trainer.log_freq=1 \
-  trainer.log_freq_unit=epoch \
-  trainer.progress_bar_unit=epoch \
+  trainer.log_freq_unit=step \
+  trainer.progress_bar_unit=step \
   trainer.total_epochs="${TOTAL_EPOCHS}" \
   trainer.val_before_train=False \
   data.shuffle=True \

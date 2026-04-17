@@ -210,6 +210,34 @@ class ALFWorldWandbHelper:
     configured: bool = False
     running_stats: dict[str, _RunningStats] = field(default_factory=dict)
 
+    @staticmethod
+    def _step_metric_name(metric_name: str) -> str:
+        if metric_name.startswith("train/"):
+            return f"train_step/{metric_name[len('train/'):]}"
+        if metric_name.startswith("eval/"):
+            return f"eval_step/{metric_name[len('eval/'):]}"
+        return metric_name
+
+    @staticmethod
+    def _with_axis_metrics(metrics: dict[str, Any], *, global_step: int, epoch: int) -> dict[str, Any]:
+        payload = dict(metrics)
+        payload["trainer/global_step"] = global_step
+        payload["trainer/epoch"] = epoch
+        payload["trainer/episode"] = epoch
+        return payload
+
+    def build_step_metrics(self, metrics: dict[str, Any], *, global_step: int, epoch: int) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in metrics.items():
+            if key.startswith("train/") or key.startswith("eval/"):
+                payload[self._step_metric_name(key)] = value
+            else:
+                payload[key] = value
+        return self._with_axis_metrics(payload, global_step=global_step, epoch=epoch)
+
+    def build_epoch_metrics(self, metrics: dict[str, Any], *, global_step: int, epoch: int) -> dict[str, Any]:
+        return self._with_axis_metrics(metrics, global_step=global_step, epoch=epoch)
+
     def _wandb(self):
         if self.tracking is None:
             return None
@@ -224,10 +252,18 @@ class ALFWorldWandbHelper:
         if wandb is None or self.configured:
             return
 
+        wandb.define_metric("trainer/global_step")
+        wandb.define_metric("trainer/epoch")
         wandb.define_metric("trainer/episode")
-        wandb.define_metric("train/*", step_metric="trainer/episode")
-        wandb.define_metric("eval/*", step_metric="trainer/episode")
-        for metric_name, summary in {
+        for prefix, step_metric in {
+            "train": "trainer/epoch",
+            "eval": "trainer/epoch",
+            "train_step": "trainer/global_step",
+            "eval_step": "trainer/global_step",
+        }.items():
+            wandb.define_metric(f"{prefix}/*", step_metric=step_metric)
+
+        summary_metrics = {
             "train/success_rate": "max",
             "eval/success_rate": "max",
             "train/invalid_action_rate": "min",
@@ -238,10 +274,17 @@ class ALFWorldWandbHelper:
             "eval/prompt_length_mean": "mean",
             "train/response_length_mean": "mean",
             "eval/response_length_mean": "mean",
-        }.items():
-            wandb.define_metric(metric_name, step_metric="trainer/episode", summary=summary)
+        }
+        for metric_name, summary in summary_metrics.items():
+            wandb.define_metric(metric_name, step_metric="trainer/epoch", summary=summary)
+            wandb.define_metric(self._step_metric_name(metric_name), step_metric="trainer/global_step", summary=summary)
 
-        for prefix in ["train", "eval"]:
+        for prefix, step_metric in [
+            ("train", "trainer/epoch"),
+            ("eval", "trainer/epoch"),
+            ("train_step", "trainer/global_step"),
+            ("eval_step", "trainer/global_step"),
+        ]:
             for metric_name in [
                 "episode_reward_mean",
                 "episode_reward_max",
@@ -256,10 +299,13 @@ class ALFWorldWandbHelper:
                 "response_length_max",
                 "response_length_min",
             ]:
-                wandb.define_metric(f"{prefix}/{metric_name}", step_metric="trainer/episode")
+                wandb.define_metric(f"{prefix}/{metric_name}", step_metric=step_metric)
 
         for category in TASK_GROUPS:
-            wandb.define_metric(f"eval/category_success/{category}", step_metric="trainer/episode", summary="last")
+            wandb.define_metric(f"eval/category_success/{category}", step_metric="trainer/epoch", summary="last")
+            wandb.define_metric(
+                f"eval_step/category_success/{category}", step_metric="trainer/global_step", summary="last"
+            )
 
         self.configured = True
 
