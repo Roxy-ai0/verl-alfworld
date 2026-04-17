@@ -28,10 +28,24 @@ VAL_ROLLOUT_N=${VAL_ROLLOUT_N:-2}
 SAVE_FREQ=${SAVE_FREQ:-20}
 TEST_FREQ=${TEST_FREQ:-10}
 RESET_RAY=${RESET_RAY:-1}
+RAY_INCLUDE_DASHBOARD=${RAY_INCLUDE_DASHBOARD:-false}
+RAY_NUM_CPUS=${RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-32}}
+RAY_OBJECT_STORE_MEMORY=${RAY_OBJECT_STORE_MEMORY:-4294967296}
+RAY_TMP_DIR=${RAY_TMP_DIR:-/tmp/ray_alfworld_prompt}
+DATA_CACHE_DIR=${DATA_CACHE_DIR:-${DATA_DIR}/rlhf_cache}
+HF_HOME=${HF_HOME:-${DATA_CACHE_DIR}/hf_home}
+HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-${DATA_CACHE_DIR}/datasets}
 AGENT_LOOP_NAME=${AGENT_LOOP_NAME:-alfworld_stepwise_prompt_grpo_agent}
 AGENT_LOOP_MANAGER_CLASS=${AGENT_LOOP_MANAGER_CLASS:-verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager}
 
 mkdir -p "${DATA_DIR}"
+mkdir -p "${RAY_TMP_DIR}"
+mkdir -p "${DATA_CACHE_DIR}"
+mkdir -p "${HF_HOME}"
+mkdir -p "${HF_DATASETS_CACHE}"
+
+export HF_HOME
+export HF_DATASETS_CACHE
 
 if [[ "${RESET_RAY}" == "1" ]]; then
   echo "[ALFWorld stepwise] Stopping existing Ray runtime to avoid stale non-stepwise workers."
@@ -47,6 +61,13 @@ echo "  rollout.prompt_length=2048"
 echo "  rollout.response_length=512"
 echo "  rollout.n=${ROLLOUT_N}"
 echo "  validate.n=${VAL_ROLLOUT_N}"
+echo "  ray.include_dashboard=${RAY_INCLUDE_DASHBOARD}"
+echo "  ray.num_cpus=${RAY_NUM_CPUS}"
+echo "  ray.object_store_memory=${RAY_OBJECT_STORE_MEMORY}"
+echo "  ray.tmp_dir=${RAY_TMP_DIR}"
+echo "  data.cache_dir=${DATA_CACHE_DIR}"
+echo "  HF_HOME=${HF_HOME}"
+echo "  HF_DATASETS_CACHE=${HF_DATASETS_CACHE}"
 echo "[ALFWorld stepwise] Expected post-start sanity checks:"
 echo "  - num_turns/mean ~= 2"
 echo "  - response_length/mean <= 512"
@@ -62,11 +83,16 @@ if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
 fi
 
 python -m verl.trainer.main_ppo \
+  +ray_kwargs.ray_init.include_dashboard=${RAY_INCLUDE_DASHBOARD} \
+  ray_kwargs.ray_init.num_cpus=${RAY_NUM_CPUS} \
+  +ray_kwargs.ray_init.object_store_memory=${RAY_OBJECT_STORE_MEMORY} \
+  +ray_kwargs.ray_init._temp_dir="${RAY_TMP_DIR}" \
   algorithm.adv_estimator=grpo \
   algorithm.compute_mean_std_cross_steps=True \
   algorithm.use_kl_in_reward=False \
   data.train_files="${TRAIN_FILE}" \
   data.val_files="${VAL_FILE}" \
+  data.cache_dir="${DATA_CACHE_DIR}" \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   data.val_batch_size=32 \
   data.max_prompt_length=2048 \
