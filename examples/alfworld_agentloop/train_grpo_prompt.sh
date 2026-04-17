@@ -36,6 +36,7 @@ DATA_CACHE_DIR=${DATA_CACHE_DIR:-${DATA_DIR}/rlhf_cache}
 HF_HOME=${HF_HOME:-${DATA_CACHE_DIR}/hf_home}
 HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-${DATA_CACHE_DIR}/datasets}
 FILTER_OVERLONG_PROMPTS_WORKERS=${FILTER_OVERLONG_PROMPTS_WORKERS:-1}
+BALANCE_BATCH=${BALANCE_BATCH:-False}
 AGENT_LOOP_NAME=${AGENT_LOOP_NAME:-alfworld_stepwise_prompt_grpo_agent}
 AGENT_LOOP_MANAGER_CLASS=${AGENT_LOOP_MANAGER_CLASS:-verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager}
 
@@ -70,6 +71,7 @@ echo "  data.cache_dir=${DATA_CACHE_DIR}"
 echo "  HF_HOME=${HF_HOME}"
 echo "  HF_DATASETS_CACHE=${HF_DATASETS_CACHE}"
 echo "  data.filter_overlong_prompts_workers=${FILTER_OVERLONG_PROMPTS_WORKERS}"
+echo "  trainer.balance_batch=${BALANCE_BATCH}"
 echo "[ALFWorld stepwise] Expected post-start sanity checks:"
 echo "  - num_turns/mean ~= 2"
 echo "  - response_length/mean <= 512"
@@ -151,6 +153,7 @@ python -m verl.trainer.main_ppo \
   trainer.experiment_name="${EXPERIMENT_NAME}" \
   trainer.logger="${LOGGER_BACKENDS}" \
   trainer.wandb_tags="${WANDB_TAGS}" \
+  trainer.balance_batch="${BALANCE_BATCH}" \
   trainer.n_gpus_per_node=8 \
   trainer.nnodes=1 \
   trainer.save_freq="${SAVE_FREQ}" \
