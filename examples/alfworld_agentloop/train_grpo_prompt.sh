@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
+export WANDB_API_KEY='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'
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
@@ -17,11 +18,11 @@ WANDB_TAGS=${WANDB_TAGS:-'["alfworld","prompt_grpo","agent_loop"]'}
 
 MAX_STEPS=${MAX_STEPS:-50}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
-PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
-PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-4}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
+PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}
 ROLLOUT_LOGPROB_MB_PER_GPU=${ROLLOUT_LOGPROB_MB_PER_GPU:-2}
 REF_LOGPROB_MB_PER_GPU=${REF_LOGPROB_MB_PER_GPU:-2}
-AGENT_NUM_WORKERS=${AGENT_NUM_WORKERS:-1}
+AGENT_NUM_WORKERS=${AGENT_NUM_WORKERS:-2}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-150}
 ROLLOUT_N=${ROLLOUT_N:-4}
 VAL_ROLLOUT_N=${VAL_ROLLOUT_N:-2}
@@ -35,7 +36,7 @@ if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
     --alfworld-data-root "${ALFWORLD_DATA_ROOT}" \
     --output-dir "${DATA_DIR}" \
     --splits train valid_unseen \
-    --agent-name alfworld_stepwise_prompt_grpo_agent \
+    --agent-name alfworld_prompt_grpo_agent \
     --max-steps "${MAX_STEPS}"
 fi
 
@@ -85,9 +86,8 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.data_parallel_size=1 \
   actor_rollout_ref.rollout.pipeline_model_parallel_size=1 \
   actor_rollout_ref.rollout.agent.num_workers="${AGENT_NUM_WORKERS}" \
-  actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_stepwise_prompt_grpo_agent \
+  actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_prompt_grpo_agent \
   actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
-  actor_rollout_ref.rollout.agent.agent_loop_manager_class=verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager \
   actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
   actor_rollout_ref.rollout.val_kwargs.do_sample=True \
