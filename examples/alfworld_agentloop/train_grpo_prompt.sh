@@ -97,7 +97,7 @@ python -m verl.trainer.main_ppo \
   data.train_files="${TRAIN_FILE}" \
   data.val_files="${VAL_FILE}" \
   +data.cache_dir="${DATA_CACHE_DIR}" \
-  +data.filter_overlong_prompts_workers="${FILTER_OVERLONG_PROMPTS_WORKERS}" \
+  ++data.filter_overlong_prompts_workers="${FILTER_OVERLONG_PROMPTS_WORKERS}" \
   data.train_batch_size="${TRAIN_BATCH_SIZE}" \
   data.val_batch_size=32 \
   data.max_prompt_length=2048 \

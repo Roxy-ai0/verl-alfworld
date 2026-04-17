@@ -1250,6 +1250,21 @@ class RayPPOTrainer:
         )
         metrics.update(global_balance_stats)
 
+    def _pad_batch_for_dp(self, batch: DataProto, metrics: Optional[dict] = None) -> DataProto:
+        """Pad a batch so DP-dispatched worker calls can split it evenly.
+
+        Stepwise agent-loop rollout may replace the training batch with a variable number
+        of samples. Actor/ref/critic worker-group dispatch requires the batch length to be
+        divisible by actor DP size.
+        """
+        dp_size = self._get_dp_size(self.actor_rollout_wg, "actor")
+        batch_padded, pad_size = pad_dataproto_to_divisor(batch, dp_size)
+        if pad_size > 0 and metrics is not None:
+            metrics["training/batch_pad_size"] = pad_size
+            metrics["training/batch_size_before_pad"] = len(batch)
+            metrics["training/batch_size_after_pad"] = len(batch_padded)
+        return batch_padded
+
     def _compute_values(self, batch: DataProto) -> DataProto:
         if self.use_legacy_worker_impl == "disable":
             batch_td = batch.to_tensordict()
@@ -1574,6 +1589,7 @@ class RayPPOTrainer:
 
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
+                    batch = self._pad_batch_for_dp(batch, metrics=metrics)
                     # Balance the number of valid tokens across DP ranks.
                     # NOTE: This usually changes the order of data in the `batch`,
                     # which won't affect the advantage calculation (since it's based on uid),
