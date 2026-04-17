@@ -13,6 +13,15 @@
 # limitations under the License.
 
 from .direct_agent_loop import ALFWorldDirectAgentLoop
+from .prompt_grpo_agent_loop import ALFWorldPromptGRPOAgentLoop
 from .react_agent_loop import ALFWorldReActAgentLoop
+from .stepwise_agent_loop_manager import ALFWorldStepwiseAgentLoopManager
+from .stepwise_prompt_grpo_agent_loop import ALFWorldStepwisePromptGRPOAgentLoop
 
-__all__ = ["ALFWorldDirectAgentLoop", "ALFWorldReActAgentLoop"]
+__all__ = [
+    "ALFWorldDirectAgentLoop",
+    "ALFWorldPromptGRPOAgentLoop",
+    "ALFWorldReActAgentLoop",
+    "ALFWorldStepwiseAgentLoopManager",
+    "ALFWorldStepwisePromptGRPOAgentLoop",
+]

@@ -121,6 +121,27 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, 
     return data, metrics
 
 
+def apply_invalid_action_penalty(data: DataProto, invalid_action_penalty_coef: float):
+    """Apply verl-agent style invalid-action penalty on the final reward token."""
+    if "is_action_valid" not in data.non_tensor_batch:
+        return data, {}
+
+    reward_tensor = data.batch["token_level_scores"]
+    prompt_length = data.batch["prompts"].shape[1]
+    valid_response_lengths = data.batch["attention_mask"][:, prompt_length:].sum(dim=1)
+    action_valids = np.asarray(data.non_tensor_batch["is_action_valid"], dtype=np.float32)
+
+    for i in range(len(data)):
+        invalid = 1.0 - float(action_valids[i])
+        reward_pos = int(valid_response_lengths[i].item()) - 1
+        if reward_pos < 0:
+            continue
+        reward_tensor[i, reward_pos] -= invalid_action_penalty_coef * invalid
+
+    metrics = {"episode/valid_action_ratio": float(action_valids.mean()) if action_valids.size > 0 else 0.0}
+    return data, metrics
+
+
 def compute_response_mask(data: DataProto):
     """Compute the attention mask for the response part of the sequence.
 
@@ -1536,9 +1557,16 @@ class RayPPOTrainer:
                             batch.batch["reward_baselines"] = reward_baseline_tensor
 
                             del rm_scores, gen_baseline_batch, gen_baseline_output
-                    # repeat to align with repeated responses in rollout
-                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-                    batch = batch.union(gen_batch_output)
+                    replace_training_batch = bool(gen_batch_output.meta_info.pop("replace_training_batch", False))
+                    if replace_training_batch:
+                        merged_meta_info = dict(batch.meta_info)
+                        merged_meta_info.update(gen_batch_output.meta_info)
+                        gen_batch_output.meta_info = merged_meta_info
+                        batch = gen_batch_output
+                    else:
+                        # repeat to align with repeated responses in rollout
+                        batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                        batch = batch.union(gen_batch_output)
                     if self._should_compute_teacher_colocate(batch):
                         with marked_timer("teacher", timing_raw, color="cyan"):
                             batch_teacher = self._compute_teacher_colocate(batch)
@@ -1639,6 +1667,16 @@ class RayPPOTrainer:
 
                         if reward_extra_infos_dict:
                             batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+
+                        if (
+                            self.config.actor_rollout_ref.actor.get("use_invalid_action_penalty", False)
+                            and "is_action_valid" in batch.non_tensor_batch
+                        ):
+                            batch, invalid_metrics = apply_invalid_action_penalty(
+                                batch,
+                                invalid_action_penalty_coef=self.config.actor_rollout_ref.actor.invalid_action_penalty_coef,
+                            )
+                            metrics.update(invalid_metrics)
 
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:

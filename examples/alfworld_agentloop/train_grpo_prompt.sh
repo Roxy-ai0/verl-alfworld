@@ -35,7 +35,7 @@ if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
     --alfworld-data-root "${ALFWORLD_DATA_ROOT}" \
     --output-dir "${DATA_DIR}" \
     --splits train valid_unseen \
-    --agent-name alfworld_prompt_grpo_agent \
+    --agent-name alfworld_stepwise_prompt_grpo_agent \
     --max-steps "${MAX_STEPS}"
 fi
 
@@ -85,8 +85,9 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.data_parallel_size=1 \
   actor_rollout_ref.rollout.pipeline_model_parallel_size=1 \
   actor_rollout_ref.rollout.agent.num_workers="${AGENT_NUM_WORKERS}" \
-  actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_prompt_grpo_agent \
+  actor_rollout_ref.rollout.agent.default_agent_loop=alfworld_stepwise_prompt_grpo_agent \
   actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
+  actor_rollout_ref.rollout.agent.agent_loop_manager_class=verl.experimental.alfworld.stepwise_agent_loop_manager.ALFWorldStepwiseAgentLoopManager \
   actor_rollout_ref.rollout.val_kwargs.n="${VAL_ROLLOUT_N}" \
   actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
   actor_rollout_ref.rollout.val_kwargs.do_sample=True \
