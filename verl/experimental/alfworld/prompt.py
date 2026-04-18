@@ -30,6 +30,34 @@ Do not output anything else.
 """
 
 
+ALFWORLD_TOOL_SYSTEM_PROMPT = """
+You are an expert agent operating in the ALFRED Embodied Environment.
+You must interact with the environment only by calling the tool `env_step`.
+The `action` argument must be a single action string chosen from the current admissible actions.
+Do not invent actions. Do not output unrelated text.
+"""
+
+
+ALFWORLD_ENV_STEP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "env_step",
+        "description": "Execute exactly one ALFWorld action.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Choose one action from the current admissible actions.",
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 ALFWORLD_TEMPLATE_NO_HIS = """
 You are an expert agent operating in the ALFRED Embodied Environment.
 Your current observation is: {current_observation}
@@ -50,6 +78,29 @@ Your admissible actions of the current situation are: [{admissible_actions}].
 Now it's your turn to take an action.
 You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags. 
 Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
+"""
+
+
+ALFWORLD_TOOL_TEMPLATE_NO_HIS = """
+You are an expert agent operating in the ALFRED Embodied Environment.
+Your current observation is: {current_observation}
+Your admissible actions of the current situation are: [{admissible_actions}].
+
+Now it's your turn to take an action.
+You should first reason briefly about the current situation.
+Then call the tool `env_step` with exactly one admissible action.
+"""
+
+
+ALFWORLD_TOOL_TEMPLATE = """
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description}
+Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}
+You are now at step {current_step} and your current observation is: {current_observation}
+Your admissible actions of the current situation are: [{admissible_actions}].
+
+Now it's your turn to take an action.
+You should first reason briefly about the current situation.
+Then call the tool `env_step` with exactly one admissible action for current step.
 """
 
 
@@ -130,5 +181,34 @@ def build_prompt_grpo_prompt(
         action_history=_format_action_history(history),
         current_step=total_step_count + 1,
         current_observation=current_observation_text,
+        admissible_actions=actions_text,
+    ).strip()
+
+
+def build_tool_calling_prompt_step0(current_observation: str, admissible_actions: list[str]) -> str:
+    actions_text = ", ".join(json.dumps(action, ensure_ascii=False) for action in admissible_actions)
+    return ALFWORLD_TOOL_TEMPLATE_NO_HIS.format(
+        current_observation=normalize_observation(current_observation),
+        admissible_actions=actions_text,
+    ).strip()
+
+
+def build_tool_calling_prompt_stepk(
+    task_description: str,
+    trajectory_history: list[dict[str, str]],
+    current_observation: str,
+    admissible_actions: list[str],
+    step_count: int | None = None,
+) -> str:
+    actions_text = ", ".join(json.dumps(action, ensure_ascii=False) for action in admissible_actions)
+    history = trajectory_history or []
+    total_step_count = len(history) if step_count is None else max(int(step_count), 0)
+    return ALFWORLD_TOOL_TEMPLATE.format(
+        task_description=(task_description or "").strip(),
+        step_count=total_step_count,
+        history_length=len(history),
+        action_history=_format_action_history(history),
+        current_step=total_step_count + 1,
+        current_observation=normalize_observation(current_observation),
         admissible_actions=actions_text,
     ).strip()

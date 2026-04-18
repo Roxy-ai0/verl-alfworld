@@ -7,6 +7,11 @@
   max_steps: 30
   history_window: 5
 
+- name: alfworld_tool_agent
+  _target_: verl.experimental.alfworld.tool_agent_loop.ALFWorldToolCallingAgentLoop
+  max_steps: 30
+  history_window: 5
+
 - name: alfworld_prompt_grpo_agent
   _target_: verl.experimental.alfworld.prompt_grpo_agent_loop.ALFWorldPromptGRPOAgentLoop
   max_steps: 50
