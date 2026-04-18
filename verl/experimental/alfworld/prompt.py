@@ -37,7 +37,11 @@ The `action` argument must be a single action string chosen from the current adm
 Do not invent actions. Do not output a plain action string by itself.
 Do not output a final answer.
 Your reply must contain exactly one tool call to `env_step`.
-If you need to choose the action `look`, the valid format is:
+Learn and follow this exact tool-call format for every reply:
+<tool_call>
+{"name": "env_step", "arguments": {"action": "<one admissible action>"}}
+</tool_call>
+For example, if the chosen action is `look`, then the reply should be:
 <tool_call>
 {"name": "env_step", "arguments": {"action": "look"}}
 </tool_call>
