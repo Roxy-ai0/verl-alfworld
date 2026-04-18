@@ -34,7 +34,14 @@ ALFWORLD_TOOL_SYSTEM_PROMPT = """
 You are an expert agent operating in the ALFRED Embodied Environment.
 You must interact with the environment only by calling the tool `env_step`.
 The `action` argument must be a single action string chosen from the current admissible actions.
-Do not invent actions. Do not output unrelated text.
+Do not invent actions. Do not output a plain action string by itself.
+Do not output a final answer.
+Your reply must contain exactly one tool call to `env_step`.
+If you need to choose the action `look`, the valid format is:
+<tool_call>
+{"name": "env_step", "arguments": {"action": "look"}}
+</tool_call>
+Any reply without a tool call is invalid.
 """
 
 
@@ -83,12 +90,15 @@ Once you've finished your reasoning, you should choose an admissible action for 
 
 ALFWORLD_TOOL_TEMPLATE_NO_HIS = """
 You are an expert agent operating in the ALFRED Embodied Environment.
+Your task is to: {task_description}
 Your current observation is: {current_observation}
 Your admissible actions of the current situation are: [{admissible_actions}].
 
 Now it's your turn to take an action.
 You should first reason briefly about the current situation.
 Then call the tool `env_step` with exactly one admissible action.
+Do not answer with only the action text.
+Your assistant reply must contain exactly one tool call to `env_step`.
 """
 
 
@@ -101,6 +111,8 @@ Your admissible actions of the current situation are: [{admissible_actions}].
 Now it's your turn to take an action.
 You should first reason briefly about the current situation.
 Then call the tool `env_step` with exactly one admissible action for current step.
+Do not answer with only the action text.
+Your assistant reply must contain exactly one tool call to `env_step`.
 """
 
 
@@ -185,9 +197,14 @@ def build_prompt_grpo_prompt(
     ).strip()
 
 
-def build_tool_calling_prompt_step0(current_observation: str, admissible_actions: list[str]) -> str:
+def build_tool_calling_prompt_step0(
+    task_description: str,
+    current_observation: str,
+    admissible_actions: list[str],
+) -> str:
     actions_text = ", ".join(json.dumps(action, ensure_ascii=False) for action in admissible_actions)
     return ALFWORLD_TOOL_TEMPLATE_NO_HIS.format(
+        task_description=(task_description or "").strip(),
         current_observation=normalize_observation(current_observation),
         admissible_actions=actions_text,
     ).strip()

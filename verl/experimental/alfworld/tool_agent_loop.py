@@ -123,6 +123,7 @@ class ALFWorldToolCallingAgentLoop(ALFWorldDirectAgentLoop):
                 recent_history = self._get_recent_history(episode_trace, history_window)
                 if step_idx == 0:
                     prompt_text = build_tool_calling_prompt_step0(
+                        task_description=task_description,
                         current_observation=state.observation,
                         admissible_actions=state.admissible_actions,
                     )

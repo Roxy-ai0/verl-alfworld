@@ -126,6 +126,7 @@ async def run_one_step(args: argparse.Namespace) -> None:
     try:
         state = env.reset()
         prompt_text = build_tool_calling_prompt_step0(
+            task_description=episode.task_description,
             current_observation=state.observation,
             admissible_actions=state.admissible_actions,
         )
